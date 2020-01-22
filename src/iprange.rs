@@ -206,7 +206,7 @@ impl IpRange {
         match self.ip_version {
             IPV4 => Some((
                 ipv4::long2ip(self.start_ip.clone() as u32),
-                ipv4::long2ip(self.start_ip.clone() as u32),
+                ipv4::long2ip(self.end_ip.clone() as u32),
             )),
             IPV6 => Some((
                 ipv6::long2ip(self.start_ip.clone(), false),
@@ -324,6 +324,14 @@ mod tests {
         assert_eq!(IpRange::new("::1", "::2").unwrap().get_version(), IPV6);
 
         assert_eq!(IpRange::new("::1", "").unwrap().get_version(), IPV6);
+    }
+
+    #[test]
+    fn test_get_range() {
+        let x = IpRange::new("127.0.0.1/24", "").unwrap();
+        let xx = IpRange::new("255.255.1.1/16", "").unwrap();
+        assert_eq!(x.get_range(), Some(("127.0.0.0".to_string(), "127.0.0.255".to_string())));
+        assert_eq!(xx.get_range(), Some(("255.255.0.0".to_string(), "255.255.255.255".to_string())));
     }
 
     #[test]
