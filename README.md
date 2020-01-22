@@ -1,3 +1,6 @@
+[![Crates.io](https://img.shields.io/crates/v/iptools.svg)](https://crates.io/crates/iptools)
+[![API reference](https://docs.rs/iptools/badge.svg)](https://docs.rs/iptools/0.1.1/iptools/)
+
 # Iptools
 
 This is a port of package [iptools](https://github.com/bd808/python-iptools) from Python.
@@ -6,7 +9,7 @@ This is a port of package [iptools](https://github.com/bd808/python-iptools) fro
 
 
 ## Supported Rust Versions
-Rust 1.3+
+Rust 1.30+
 
 ## License
 
