@@ -1,3 +1,4 @@
+[![Build Status](https://travis-ci.com/Deniskore/iptools.svg?branch=master)](https://travis-ci.com/Deniskore/iptools)
 [![Crates.io](https://img.shields.io/crates/v/iptools.svg)](https://crates.io/crates/iptools)
 [![API reference](https://docs.rs/iptools/badge.svg)](https://docs.rs/iptools/0.1.1/iptools/)
 
