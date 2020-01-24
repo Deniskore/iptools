@@ -330,8 +330,19 @@ mod tests {
     fn test_get_range() {
         let x = IpRange::new("127.0.0.1/24", "").unwrap();
         let xx = IpRange::new("255.255.1.1/16", "").unwrap();
-        assert_eq!(x.get_range(), Some(("127.0.0.0".to_string(), "127.0.0.255".to_string())));
-        assert_eq!(xx.get_range(), Some(("255.255.0.0".to_string(), "255.255.255.255".to_string())));
+        let xxx = IpRange::new("127.0.0.1", "127.0.0.255").unwrap();
+        assert_eq!(
+            x.get_range(),
+            Some(("127.0.0.0".to_string(), "127.0.0.255".to_string()))
+        );
+        assert_eq!(
+            xx.get_range(),
+            Some(("255.255.0.0".to_string(), "255.255.255.255".to_string()))
+        );
+        assert_eq!(
+            xxx.get_range(),
+            Some(("127.0.0.1".to_string(), "127.0.0.255".to_string()))
+        );
     }
 
     #[test]
