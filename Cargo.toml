@@ -1,6 +1,6 @@
 [package]
 name = "iptools"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Denis Avvakumov"]
 license = "MIT"
 readme = "README.md"
@@ -16,4 +16,3 @@ edition = "2018"
 [dependencies]
 regex = "1.3.1"
 once_cell = "1.2.0"
-thiserror = "1.0"
