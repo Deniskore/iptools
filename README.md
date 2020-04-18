@@ -1,6 +1,6 @@
 [![Build Status](https://travis-ci.com/Deniskore/iptools.svg?branch=master)](https://travis-ci.com/Deniskore/iptools)
 [![Crates.io](https://img.shields.io/crates/v/iptools.svg)](https://crates.io/crates/iptools)
-[![API reference](https://docs.rs/iptools/badge.svg)](https://docs.rs/iptools/0.1.1/iptools/)
+[![API reference](https://docs.rs/iptools/badge.svg)](https://docs.rs/iptools)
 
 # Iptools
 
@@ -10,7 +10,7 @@ This is a port of package [iptools](https://github.com/bd808/python-iptools) fro
 Add the following dependency to your Cargo manifest:
 ```
 [dependencies]
-iptools = "0.1.3"
+iptools = "0.1.4"
 ```
 
 ## Example of usage

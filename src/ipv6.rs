@@ -124,7 +124,7 @@ pub const MULTICAST_LOCAL_DHCP: &str = "ff02::1:2";
 pub const MULTICAST_SITE_DHCP: &str = "ff05::1:3";
 
 // RFC 1924 alphabet
-const _RFC1924_ALPHABET: &'static [char] = &[
+const _RFC1924_ALPHABET: &[char] = &[
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
     'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b',
     'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u',
@@ -135,9 +135,9 @@ const _RFC1924_ALPHABET: &'static [char] = &[
 static RFC1924_REV_MAP: Lazy<Mutex<HashMap<char, i32>>> = Lazy::new(|| {
     let mut i = -1;
     let map = _RFC1924_ALPHABET
-        .into_iter()
+        .iter()
         .map(|c| {
-            i = i + 1;
+            i += 1;
             (*c, i)
         })
         .collect::<HashMap<_, _>>();
@@ -155,7 +155,7 @@ static RFC1924_REV_MAP: Lazy<Mutex<HashMap<char, i32>>> = Lazy::new(|| {
 /// ```
 pub fn validate_ip(ip: &str) -> bool {
     if HEX_RE.lock().unwrap().is_match(ip) {
-        return ip.split("::").collect::<Vec<&str>>().len() <= 2;
+        return ip.split("::").count() <= 2;
     }
     if DOTTED_QUAD_RE.lock().unwrap().is_match(ip) {
         let halves: Vec<&str> = ip.split("::").collect();
@@ -203,10 +203,11 @@ pub fn ip2long(_ip: &str) -> Option<u128> {
 
     let halves: Vec<&str> = ip.split("::").collect();
     let mut hextets: Vec<String> = halves[0].split(':').map(|i| i.to_string()).collect();
-    let mut h2: Vec<&str> = Vec::new();
-    if halves.len() == 2 {
-        h2 = halves[1].split(':').collect();
-    }
+    let h2 = if halves.len() == 2 {
+        halves[1].split(':').collect()
+    } else {
+        Vec::new()
+    };
     for _z in 0..8 - (hextets.len() + h2.len()) {
         hextets.push("0".to_string());
     }
@@ -221,8 +222,7 @@ pub fn ip2long(_ip: &str) -> Option<u128> {
         }
         long_ip = (long_ip << 16) | u128::from_str_radix(h, 16).unwrap();
     }
-
-    return Some(long_ip);
+    Some(long_ip)
 }
 
 /// Converts a network byte order 128 bit integer to a canonical IPV6 address
@@ -254,7 +254,7 @@ pub fn long2ip(long_ip: u128, rfc1924: bool) -> String {
             .chain(std::iter::once(c))
         })
         .collect::<String>()
-        .split(" ")
+        .split(' ')
         .map(|item| format!("{:x}", u32::from_str_radix(item, 16).unwrap()))
         .collect::<Vec<String>>();
 
@@ -295,8 +295,7 @@ pub fn long2ip(long_ip: u128, rfc1924: bool) -> String {
             hextets.insert(0, "".to_string());
         }
     }
-
-    return hextets.join(":");
+    hextets.join(":")
 }
 
 /// Converts a network byte order 128 bit integer to an rfc1924 IPV6 address
@@ -347,7 +346,7 @@ pub fn rfc19242long(s: &str) -> Option<u128> {
     } else {
         // TODO ?
     }
-    return Some(x);
+    Some(x)
 }
 
 /// Validates a CIDR notation ip address

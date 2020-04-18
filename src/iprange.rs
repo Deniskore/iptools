@@ -194,8 +194,8 @@ impl IpRange {
 
         Ok(IpRange {
             ip_version: ip_ver,
-            start_ip: start_ip.clone(),
-            end_ip: end_ip.clone(),
+            start_ip,
+            end_ip,
             length: end_ip - start_ip + 1,
             iter_ip,
         })
@@ -205,12 +205,12 @@ impl IpRange {
     pub fn get_range(&self) -> Option<(String, String)> {
         match self.ip_version {
             IPV4 => Some((
-                ipv4::long2ip(self.start_ip.clone() as u32),
-                ipv4::long2ip(self.end_ip.clone() as u32),
+                ipv4::long2ip(self.start_ip as u32),
+                ipv4::long2ip(self.end_ip as u32),
             )),
             IPV6 => Some((
-                ipv6::long2ip(self.start_ip.clone(), false),
-                ipv6::long2ip(self.end_ip.clone(), false),
+                ipv6::long2ip(self.start_ip, false),
+                ipv6::long2ip(self.end_ip, false),
             )),
             _ => None,
         }
@@ -235,7 +235,7 @@ impl IpRange {
         if self.iter_ip == self.end_ip {
             return self.end_ip - self.iter_ip + 1;
         }
-        return self.end_ip - self.iter_ip;
+        self.end_ip - self.iter_ip
     }
 
     /// Check that the address is in the current range
@@ -269,7 +269,7 @@ impl IpRange {
             return Err(UnknownVersion());
         }
 
-        return if !is_range {
+        if !is_range {
             match self.ip_version {
                 IPV4 => {
                     Ok(self.start_ip as u32 <= addr as u32 && addr as u32 <= self.end_ip as u32)
@@ -287,7 +287,7 @@ impl IpRange {
                     && end_ip <= self.end_ip),
                 IPVUnknown => Err(UnknownVersion()),
             }
-        };
+        }
     }
 
     /// Check if ip addr is reserved/private
