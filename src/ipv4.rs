@@ -274,7 +274,7 @@ pub fn ip2long(ip: &str) -> Option<u32> {
     for q in quads {
         ip_i32 = (ip_i32 << 8) | q as u32;
     }
-    return Some(ip_i32);
+    Some(ip_i32)
 }
 
 /// Converts a dotted-quad ip to base network number
@@ -298,15 +298,14 @@ pub fn ip2network(ip: &str) -> Option<u32> {
     let quads: Vec<&str> = ip.split('.').collect();
     let mut netw: u32 = 0;
     for i in 0..4 {
-        let val;
-        if quads.len() - 1 >= i {
-            val = quads[i].parse::<u32>().unwrap();
+        let val = if quads.len() > i {
+            quads[i].parse::<u32>().unwrap()
         } else {
-            val = 0;
-        }
+            0
+        };
         netw = (netw << 8) | val;
     }
-    return Some(netw);
+    Some(netw)
 }
 
 /// Converts a network byte order 32 bit integer to a dotted quad ip address
@@ -398,7 +397,7 @@ pub fn netmask2prefix(mask: &str) -> u32 {
             return bin_u32(result).matches('1').count() as u32;
         }
     }
-    return 0;
+    0
 }
 
 /// Converts a dotted-quad ip address including a netmask into a tuple containing the network block start and end addresses
@@ -441,7 +440,7 @@ fn _block_from_ip_and_prefix(ip: u32, prefix: u32) -> (String, String) {
         }
     }
     let block_end = block_start | mask;
-    return (long2ip(block_start), long2ip(block_end));
+    (long2ip(block_start), long2ip(block_end))
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 [package]
 name = "iptools"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["Denis Avvakumov"]
 license = "MIT"
 readme = "README.md"
