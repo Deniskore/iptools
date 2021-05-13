@@ -118,11 +118,7 @@ impl PartialEq for IpRange {
 fn _address2long(address: &str, ip_ver: IpVer) -> Option<u128> {
     match ip_ver {
         IPV4 => {
-            if let Some(ip_long) = ipv4::ip2long(address) {
-                Some(ip_long as u128)
-            } else {
-                None
-            }
+            ipv4::ip2long(address).map(|ip_long| ip_long as u128)
         }
         IPV6 => Some(ipv6::ip2long(address).unwrap()),
         _ => None,
@@ -229,6 +225,9 @@ impl IpRange {
     pub fn len(&self) -> u128 {
         self.length
     }
+
+    /// Check if length is zero
+    pub fn is_empty(&self) -> bool { self.length == 0}
 
     /// Get length of current IP range
     pub fn len_cur(&self) -> u128 {

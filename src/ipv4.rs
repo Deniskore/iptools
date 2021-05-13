@@ -177,7 +177,7 @@ pub fn validate_ip(ip: &str) -> bool {
 /// ```
 pub fn validate_cidr(cidr: &str) -> bool {
     if CIDR_RE.lock().unwrap().is_match(cidr) {
-        let ip_mask = cidr.split('/').map(|val| val).collect::<Vec<_>>();
+        let ip_mask = cidr.split('/').collect::<Vec<_>>();
         if validate_ip(ip_mask[0]) {
             if ip_mask[1].parse::<i32>().unwrap() > 32 {
                 return false;
@@ -235,7 +235,7 @@ pub fn validate_netmask(netmask: &str) -> bool {
 /// ```
 pub fn validate_subnet(subnet: &str) -> bool {
     if subnet.contains('/') {
-        let start_mask: Vec<&str> = subnet.split('/').map(|val| val).collect::<Vec<_>>();
+        let start_mask: Vec<&str> = subnet.split('/').collect::<Vec<_>>();
         if start_mask.len() > 2 {
             return false;
         }

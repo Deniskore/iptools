@@ -30,7 +30,7 @@ println!("{:?}", first_range.contains("127.0.0.3"));
 ```
 
 ## Supported Rust Versions
-Rust 1.31+
+Rust 1.41.1+
 
 ## License
 
