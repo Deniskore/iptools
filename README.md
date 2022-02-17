@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.com/Deniskore/iptools.svg?branch=master)](https://travis-ci.com/Deniskore/iptools)
+[![Build Status](https://app.travis-ci.com/Deniskore/iptools.svg?branch=master)](https://app.travis-ci.com/github/Deniskore/iptools)
 [![Crates.io](https://img.shields.io/crates/v/iptools.svg)](https://crates.io/crates/iptools)
 [![API reference](https://docs.rs/iptools/badge.svg)](https://docs.rs/iptools)
 
@@ -10,7 +10,7 @@ This is a port of package [iptools](https://github.com/bd808/python-iptools) fro
 Add the following dependency to your Cargo manifest:
 ```
 [dependencies]
-iptools = "0.1.5"
+iptools = "0.2.0"
 ```
 
 ## Example of usage
@@ -30,7 +30,7 @@ println!("{:?}", first_range.contains("127.0.0.3"));
 ```
 
 ## Supported Rust Versions
-Rust 1.41.1+
+Rust 1.56.0+
 
 ## License
 

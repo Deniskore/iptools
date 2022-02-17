@@ -1,19 +1,25 @@
-// Copyright (c) 2020 Denis Avvakumov
+// Copyright (c) 2022 Denis Avvakumov
 // Licensed under the MIT license,  https://opensource.org/licenses/MIT
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::sync::Mutex;
 
-static IPV4_RE: Lazy<Mutex<Regex>> =
-    Lazy::new(|| Mutex::new(Regex::new(r"^(\d{1,3}\.){0,3}\d{1,3}$").unwrap()));
+use crate::error::Error;
+use crate::error::Result;
 
-static CIDR_RE: Lazy<Mutex<Regex>> =
-    Lazy::new(|| Mutex::new(Regex::new(r"^(\d{1,3}\.){0,3}\d{1,3}/\d{1,2}$").unwrap()));
+static IPV4_RE: Lazy<&Regex> = Lazy::new(|| {
+    static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
+    RE.get_or_init(|| regex::Regex::new(r"^(\d{1,3}\.){0,3}\d{1,3}$").unwrap())
+});
+
+static CIDR_RE: Lazy<&Regex> = Lazy::new(|| {
+    static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
+    RE.get_or_init(|| regex::Regex::new(r"^(\d{1,3}\.){0,3}\d{1,3}/\d{1,2}$").unwrap())
+});
 
 /// IETF and IANA reserved ip addresses
-pub static RESERVED_RANGES: Lazy<Mutex<Vec<&str>>> = Lazy::new(|| {
-    let vec = vec![
+pub static RESERVED_RANGES: Lazy<Vec<&str>> = Lazy::new(|| {
+    vec![
         CURRENT_NETWORK,
         PRIVATE_NETWORK_10,
         SHARED_ADDRESS_SPACE,
@@ -31,15 +37,13 @@ pub static RESERVED_RANGES: Lazy<Mutex<Vec<&str>>> = Lazy::new(|| {
         MULTICAST,
         RESERVED,
         BROADCAST,
-    ];
-    Mutex::new(vec)
+    ]
 });
 
 #[allow(dead_code)]
 /// Last ip
 pub const MAX_IP: u32 = std::u32::MAX;
 
-#[allow(dead_code)]
 /// First ip
 pub const MIN_IP: u32 = 0;
 
@@ -124,19 +128,9 @@ pub const RESERVED: &str = "240.0.0.0/4";
 /// [RFC 919](https://tools.ietf.org/html/rfc919)
 pub const BROADCAST: &str = "255.255.255.255";
 
-#[allow(dead_code)]
 pub fn bin_u32(number: u32) -> String {
     return format!("0b{:b}", number);
 }
-
-#[allow(dead_code)]
-pub fn bin_i32(number: i32) -> String {
-    if number >= 0 {
-        return format!("0b{:b}", number.abs());
-    }
-    format!("-0b{:b}", number.abs())
-}
-
 /// Validates a dotted-quad ip address
 ///
 /// The string is considered a valid dotted-quad address if it consists of
@@ -150,7 +144,7 @@ pub fn bin_i32(number: i32) -> String {
 /// assert_eq!(validate_ip("127.0.0.x"), false);
 /// ```
 pub fn validate_ip(ip: &str) -> bool {
-    if IPV4_RE.lock().unwrap().is_match(ip) {
+    if IPV4_RE.is_match(ip) {
         let quads = ip.split('.');
         for q in quads {
             if q.parse::<u32>().unwrap() > 255 {
@@ -162,7 +156,7 @@ pub fn validate_ip(ip: &str) -> bool {
     false
 }
 
-/// Validates a [CIDR](https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing) notation
+/// Validate a [CIDR](https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing) notation
 ///
 /// The string is considered a valid CIDR address if it consists of a valid
 /// IPv4 address in dotted-quad format followed by a forward slash (/) and
@@ -176,7 +170,7 @@ pub fn validate_ip(ip: &str) -> bool {
 /// assert_eq!(validate_cidr("127.0.0.1"), false);
 /// ```
 pub fn validate_cidr(cidr: &str) -> bool {
-    if CIDR_RE.lock().unwrap().is_match(cidr) {
+    if CIDR_RE.is_match(cidr) {
         let ip_mask = cidr.split('/').collect::<Vec<_>>();
         if validate_ip(ip_mask[0]) {
             if ip_mask[1].parse::<i32>().unwrap() > 32 {
@@ -190,7 +184,7 @@ pub fn validate_cidr(cidr: &str) -> bool {
     false
 }
 
-/// Validates that a dotted-quad ip address is a valid [netmask](https://en.wikipedia.org/wiki/Subnetwork)
+/// Validate that a dotted-quad ip address is a valid [netmask](https://en.wikipedia.org/wiki/Subnetwork)
 ///
 /// # Example
 ///
@@ -219,7 +213,7 @@ pub fn validate_netmask(netmask: &str) -> bool {
     false
 }
 
-/// Validates a dotted-quad ip adress including a netmask
+/// Validate a dotted-quad ip adress including a netmask
 ///
 /// The string is considered a valid dotted-quad address with netmask if it
 /// consists of one to four octets (0-255) seperated by periods (.) followed
@@ -244,18 +238,18 @@ pub fn validate_subnet(subnet: &str) -> bool {
     false
 }
 
-/// Converts a dotted-quad ip address to a network byte order 32 bit integer
+/// Convert a dotted-quad ip address to a network byte order 32 bit integer
 ///
 /// # Example
 ///
 /// ```
 /// use iptools::ipv4::ip2long;
-/// assert_eq!(ip2long("127"), Some(2130706432));
-/// assert_eq!(ip2long("127.0.0.256"), None);
+/// assert_eq!(ip2long("127"), Ok(2130706432));
+/// assert_eq!(ip2long("127.0.0.256").is_err(), true);
 /// ```
-pub fn ip2long(ip: &str) -> Option<u32> {
+pub fn ip2long(ip: &str) -> Result<u32> {
     if !validate_ip(ip) {
-        return None;
+        return Err(Error::V4IP());
     }
     let mut quads: Vec<i32> = ip.split('.').filter_map(|w| w.parse().ok()).collect();
     if quads.len() == 1 {
@@ -274,10 +268,10 @@ pub fn ip2long(ip: &str) -> Option<u32> {
     for q in quads {
         ip_i32 = (ip_i32 << 8) | q as u32;
     }
-    Some(ip_i32)
+    Ok(ip_i32)
 }
 
-/// Converts a dotted-quad ip to base network number
+/// Convert a dotted-quad ip to base network number
 ///
 /// This differs from `ip2long` in that partial addresses as treated as
 /// all network instead of network plus host (eg. '127.1' expands to '127.1.0.0')
@@ -308,7 +302,7 @@ pub fn ip2network(ip: &str) -> Option<u32> {
     Some(netw)
 }
 
-/// Converts a network byte order 32 bit integer to a dotted quad ip address
+/// Convert a network byte order 32 bit integer to a dotted quad ip address
 ///
 /// # Example
 ///
@@ -326,63 +320,58 @@ pub fn long2ip(ip_dec: u32) -> String {
     );
 }
 
-/// Converts a dotted-quad ip address to a hex encoded number
+/// Convert a dotted-quad ip address to a hex encoded number
 ///
 /// # Example
 ///
 /// ```
 /// use iptools::ipv4::ip2hex;
-/// assert_eq!(ip2hex("0.0.0.1"), Some("00000001".to_string()));
-/// assert_eq!(ip2hex("127.0.0.1"), Some("7f000001".to_string()));
+/// assert_eq!(ip2hex("0.0.0.1"), Ok("00000001".to_string()));
+/// assert_eq!(ip2hex("127.0.0.1"), Ok("7f000001".to_string()));
 /// ```
-pub fn ip2hex(ip: &str) -> Option<String> {
-    if let Some(long_ip) = ip2long(ip) {
-        return Some(format!("{:08x}", long_ip));
-    }
-    None
+pub fn ip2hex(ip: &str) -> Result<String> {
+    return Ok(format!("{:08x}", ip2long(ip)?));
 }
 
-/// Converts a hex encoded integer to a dotted-quad ip address
+/// Convert a hex encoded integer to a dotted-quad ip address
 ///
 /// # Example
 ///
 /// ```
 /// use iptools::ipv4::hex2ip;
-/// assert_eq!(hex2ip("00000001"), Some("0.0.0.1".to_string()));
-/// assert_eq!(hex2ip("7f000001"), Some("127.0.0.1".to_string()));
+/// assert_eq!(hex2ip("00000001"), Ok("0.0.0.1".to_string()));
+/// assert_eq!(hex2ip("7f000001"), Ok("127.0.0.1".to_string()));
 /// ```
-pub fn hex2ip(hex_str: &str) -> Option<String> {
+pub fn hex2ip(hex_str: &str) -> Result<String> {
     let exclude_prefix = hex_str.trim_start_matches("0x");
-    if let Ok(hex_ip) = u32::from_str_radix(exclude_prefix, 16) {
-        return Some(long2ip(hex_ip));
-    }
-    None
+    let hex_ip = u32::from_str_radix(exclude_prefix, 16).map_err(|_| Error::Hex2IP())?;
+    Ok(long2ip(hex_ip))
 }
 
-/// Converts a CIDR notation ip address into a tuple containing the network block start and end addresses
+/// Convert a CIDR notation ip address into a tuple containing the network block start and end addresses
 ///
 /// # Example
 ///
 /// ```
 /// use iptools::ipv4::cidr2block;
-/// assert_eq!(cidr2block("127.0.0.1/32"), Some(("127.0.0.1".to_string(), "127.0.0.1".to_string())));
-/// assert_eq!(cidr2block("127/8"), Some(("127.0.0.0".to_string(), "127.255.255.255".to_string())));
+/// assert_eq!(cidr2block("127.0.0.1/32"), Ok(("127.0.0.1".to_string(), "127.0.0.1".to_string())));
+/// assert_eq!(cidr2block("127/8"), Ok(("127.0.0.0".to_string(), "127.255.255.255".to_string())));
 /// ```
-pub fn cidr2block(cidr: &str) -> Option<(String, String)> {
+pub fn cidr2block(cidr: &str) -> Result<(String, String)> {
     if !validate_cidr(cidr) {
-        return None;
+        return Err(Error::V4CIDR());
     }
 
     let ip_prefix: Vec<&str> = cidr.split('/').collect();
     let prefix = ip_prefix[1].parse::<u32>().unwrap();
 
     if let Some(network) = ip2network(ip_prefix[0]) {
-        return Some(_block_from_ip_and_prefix(network, prefix));
+        return Ok(_block_from_ip_and_prefix(network, prefix));
     }
-    None
+    Err(Error::V4CIDR())
 }
 
-/// Converts a dotted-quad netmask into a CIDR prefix
+/// Convert a dotted-quad netmask into a CIDR prefix
 ///
 /// # Example
 ///
@@ -400,7 +389,7 @@ pub fn netmask2prefix(mask: &str) -> u32 {
     0
 }
 
-/// Converts a dotted-quad ip address including a netmask into a tuple containing the network block start and end addresses
+/// Convert a dotted-quad ip address including a netmask into a tuple containing the network block start and end addresses
 ///
 /// # Example
 ///
@@ -446,15 +435,15 @@ fn _block_from_ip_and_prefix(ip: u32, prefix: u32) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use crate::ipv4::{
-        _block_from_ip_and_prefix, bin_i32, bin_u32, cidr2block, hex2ip, ip2hex, ip2long,
-        ip2network, long2ip, netmask2prefix, subnet2block, validate_cidr, validate_ip,
-        validate_netmask, validate_subnet, BROADCAST, LOOPBACK, MAX_IP, MIN_IP,
+        _block_from_ip_and_prefix, bin_u32, cidr2block, hex2ip, ip2hex, ip2long, ip2network,
+        long2ip, netmask2prefix, subnet2block, validate_cidr, validate_ip, validate_netmask,
+        validate_subnet, BROADCAST, LOOPBACK, MAX_IP, MIN_IP,
     };
+
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_bin() {
-        assert_eq!(bin_i32(100), "0b1100100");
-        assert_eq!(bin_i32(-100), "-0b1100100");
         assert_eq!(bin_u32(100u32), "0b1100100");
     }
 
@@ -488,10 +477,10 @@ mod tests {
 
     #[test]
     fn test_ip2long() {
-        assert_eq!(ip2long("127.0.0.1"), Some(2130706433));
-        assert_eq!(ip2long("127.1"), Some(2130706433));
-        assert_eq!(ip2long("127"), Some(2130706432));
-        assert_eq!(ip2long("127.0.0.256"), None);
+        assert_eq!(ip2long("127.0.0.1"), Ok(2130706433));
+        assert_eq!(ip2long("127.1"), Ok(2130706433));
+        assert_eq!(ip2long("127"), Ok(2130706432));
+        assert_eq!(ip2long("127.0.0.256").is_err(), true);
     }
 
     #[test]
@@ -503,21 +492,21 @@ mod tests {
 
     #[test]
     fn test_ip2hex() {
-        assert_eq!(ip2hex("0.0.0.1"), Some("00000001".to_string()));
-        assert_eq!(ip2hex("127.0.0.1"), Some("7f000001".to_string()));
-        assert_eq!(ip2hex("127.255.255.255"), Some("7fffffff".to_string()));
-        assert_eq!(ip2hex("128.0.0.1"), Some("80000001".to_string()));
-        assert_eq!(ip2hex("128.1"), Some("80000001".to_string()));
-        assert_eq!(ip2hex("255.255.255.255"), Some("ffffffff".to_string()));
+        assert_eq!(ip2hex("0.0.0.1"), Ok("00000001".to_string()));
+        assert_eq!(ip2hex("127.0.0.1"), Ok("7f000001".to_string()));
+        assert_eq!(ip2hex("127.255.255.255"), Ok("7fffffff".to_string()));
+        assert_eq!(ip2hex("128.0.0.1"), Ok("80000001".to_string()));
+        assert_eq!(ip2hex("128.1"), Ok("80000001".to_string()));
+        assert_eq!(ip2hex("255.255.255.255"), Ok("ffffffff".to_string()));
     }
 
     #[test]
     fn test_hex2ip() {
-        assert_eq!(hex2ip("00000001"), Some("0.0.0.1".to_string()));
-        assert_eq!(hex2ip("7f000001"), Some("127.0.0.1".to_string()));
-        assert_eq!(hex2ip("7fffffff"), Some("127.255.255.255".to_string()));
-        assert_eq!(hex2ip("80000001"), Some("128.0.0.1".to_string()));
-        assert_eq!(hex2ip("ffffffff"), Some("255.255.255.255".to_string()));
+        assert_eq!(hex2ip("00000001"), Ok("0.0.0.1".to_string()));
+        assert_eq!(hex2ip("7f000001"), Ok("127.0.0.1".to_string()));
+        assert_eq!(hex2ip("7fffffff"), Ok("127.255.255.255".to_string()));
+        assert_eq!(hex2ip("80000001"), Ok("128.0.0.1".to_string()));
+        assert_eq!(hex2ip("ffffffff"), Ok("255.255.255.255".to_string()));
     }
 
     #[test]
@@ -591,27 +580,27 @@ mod tests {
     fn test_cidr2block() {
         assert_eq!(
             cidr2block("127.0.0.1/32"),
-            Some(("127.0.0.1".to_string(), "127.0.0.1".to_string()))
+            Ok(("127.0.0.1".to_string(), "127.0.0.1".to_string()))
         );
         assert_eq!(
             cidr2block("127/8"),
-            Some(("127.0.0.0".to_string(), "127.255.255.255".to_string()))
+            Ok(("127.0.0.0".to_string(), "127.255.255.255".to_string()))
         );
         assert_eq!(
             cidr2block("127.0.1/16"),
-            Some(("127.0.0.0".to_string(), "127.0.255.255".to_string()))
+            Ok(("127.0.0.0".to_string(), "127.0.255.255".to_string()))
         );
         assert_eq!(
             cidr2block("127.1/24"),
-            Some(("127.1.0.0".to_string(), "127.1.0.255".to_string()))
+            Ok(("127.1.0.0".to_string(), "127.1.0.255".to_string()))
         );
         assert_eq!(
             cidr2block("127.0.0.3/29"),
-            Some(("127.0.0.0".to_string(), "127.0.0.7".to_string()))
+            Ok(("127.0.0.0".to_string(), "127.0.0.7".to_string()))
         );
         assert_eq!(
             cidr2block("127/0"),
-            Some(("0.0.0.0".to_string(), "255.255.255.255".to_string()))
+            Ok(("0.0.0.0".to_string(), "255.255.255.255".to_string()))
         );
     }
 

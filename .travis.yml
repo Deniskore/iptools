@@ -1,6 +1,14 @@
 language: rust
+before_script:
+  - rustup component add rustfmt
+  - rustup component add clippy
+  - cargo install cargo-audit
 rust:
-  - 1.41.1
+  - 1.56.0
   - stable
-jobs:
-fast_finish: true
+script:
+  cargo fmt --all -- --check &&
+  cargo clippy -- -D warnings &&
+  cargo build &&
+  cargo test &&
+  cargo audit

@@ -1,68 +1,18 @@
-// Copyright (c) 2020 Denis Avvakumov
+// Copyright (c) 2022 Denis Avvakumov
 // Licensed under the MIT license,  https://opensource.org/licenses/MIT
 
-use crate::iprange::Error::{UnknownVersion, V4Subnet, V4CIDR, V6CIDR};
+use crate::error::Error::{UnknownVersion, V4Subnet};
+use crate::error::Result;
 use crate::iprange::IpVer::*;
 use crate::ipv4;
 use crate::ipv6;
-use core::fmt;
-use std::fmt::Display;
 use std::hash::{Hash, Hasher};
-
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug)]
-pub enum Error {
-    V4CIDR(),
-    V6CIDR(),
-    V4Subnet(),
-    UnknownVersion(),
-}
-
-impl Clone for Error {
-    fn clone(&self) -> Self {
-        use self::Error::*;
-
-        match self {
-            V4CIDR() => V4CIDR(),
-            V6CIDR() => V6CIDR(),
-            V4Subnet() => V4Subnet(),
-            UnknownVersion() => UnknownVersion(),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn description(&self) -> &str {
-        use self::Error::*;
-
-        match *self {
-            V4CIDR() => "Couldn't validate CIDR ipv4::cidr2block",
-            V6CIDR() => "Couldn't validate CIDR ipv6::cidr2block",
-            V4Subnet() => "Couldn't validate subnet ipv4::cidr2block",
-            UnknownVersion() => "Couldn't detect IP version",
-        }
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
-        use self::Error::*;
-
-        match *self {
-            V4CIDR() => write!(f, "Couldn't validate CIDR ipv4::cidr2block",),
-            V6CIDR() => write!(f, "Couldn't validate CIDR ipv6::cidr2block"),
-            V4Subnet() => write!(f, "Couldn't validate subnet ipv4::cidr2block"),
-            UnknownVersion() => write!(f, "Couldn't detect IP version"),
-        }
-    }
-}
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum IpVer {
-    IPVUnknown,
     IPV4,
     IPV6,
+    IPVUnknown,
 }
 
 #[derive(Debug, Clone)]
@@ -115,18 +65,16 @@ impl PartialEq for IpRange {
 }
 
 // Converts a string address to a numeric value
-fn _address2long(address: &str, ip_ver: IpVer) -> Option<u128> {
+fn _address2long(address: &str, ip_ver: IpVer) -> Result<u128> {
     match ip_ver {
-        IPV4 => {
-            ipv4::ip2long(address).map(|ip_long| ip_long as u128)
-        }
-        IPV6 => Some(ipv6::ip2long(address).unwrap()),
-        _ => None,
+        IPV4 => ipv4::ip2long(address).map(|ip_long| ip_long as u128),
+        IPV6 => ipv6::ip2long(address),
+        IPVUnknown => Err(UnknownVersion()),
     }
 }
 
-/// Provides range of ip addresses.
-/// Converts a CIDR notation address, ip address and subnet, tuple of ip addresses or start and end addresses into iterable object
+/// Range of ip addresses (IPV4, IPV6)
+/// Convert a CIDR notation address, ip address and subnet, tuple of ip addresses or start and end addresses into iterable object
 impl IpRange {
     pub fn new(_start: &str, _end: &str) -> Result<IpRange> {
         let mut start = _start.to_string();
@@ -140,25 +88,25 @@ impl IpRange {
         if ipv4::validate_cidr(_start) {
             let result = ipv4::cidr2block(_start);
             match result {
-                Some(result) => {
+                Ok(result) => {
                     ip_ver = IPV4;
                     start = result.0;
                     end = result.1;
                 }
-                None => {
-                    return Err(V4CIDR());
+                Err(e) => {
+                    return Err(e);
                 }
             }
         } else if ipv6::validate_cidr(_start) {
             let result = ipv6::cidr2block(_start);
             match result {
-                Some(result) => {
+                Ok(result) => {
                     ip_ver = IPV6;
                     start = result.0;
                     end = result.1;
                 }
-                None => {
-                    return Err(V6CIDR());
+                Err(e) => {
+                    return Err(e);
                 }
             }
         } else if ipv4::validate_subnet(_start) {
@@ -183,8 +131,8 @@ impl IpRange {
             return Err(UnknownVersion());
         }
 
-        let start_ip = _address2long(&start, ip_ver.clone()).unwrap();
-        let end_ip = _address2long(&end, ip_ver.clone()).unwrap();
+        let start_ip = _address2long(&start, ip_ver.clone())?;
+        let end_ip = _address2long(&end, ip_ver.clone())?;
 
         let iter_ip = start_ip.checked_sub(1).unwrap_or(start_ip);
 
@@ -227,7 +175,9 @@ impl IpRange {
     }
 
     /// Check if length is zero
-    pub fn is_empty(&self) -> bool { self.length == 0}
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
 
     /// Get length of current IP range
     pub fn len_cur(&self) -> u128 {
@@ -246,22 +196,22 @@ impl IpRange {
         let mut end_ip = 0u128;
         if ipv4::validate_cidr(ip) {
             is_range = true;
-            let tuple = ipv4::cidr2block(ip).unwrap();
-            start_ip = _address2long(&tuple.0, IPV4).unwrap();
-            end_ip = _address2long(&tuple.1, IPV4).unwrap();
+            let tuple = ipv4::cidr2block(ip)?;
+            start_ip = _address2long(&tuple.0, IPV4)?;
+            end_ip = _address2long(&tuple.1, IPV4)?;
             is_valid = true;
         } else if ipv6::validate_cidr(ip) {
             is_valid = true;
             is_range = true;
-            let tuple = ipv6::cidr2block(ip).unwrap();
-            start_ip = _address2long(&tuple.0, IPV6).unwrap();
-            end_ip = _address2long(&tuple.1, IPV6).unwrap();
+            let tuple = ipv6::cidr2block(ip)?;
+            start_ip = _address2long(&tuple.0, IPV6)?;
+            end_ip = _address2long(&tuple.1, IPV6)?;
         } else if ipv6::validate_ip(ip) {
             is_valid = true;
-            addr = _address2long(ip, IPV6).unwrap();
+            addr = _address2long(ip, IPV6)?;
         } else if ipv4::validate_ip(ip) {
             is_valid = true;
-            addr = _address2long(ip, IPV4).unwrap();
+            addr = _address2long(ip, IPV4)?;
         }
 
         if !is_valid {
@@ -289,20 +239,29 @@ impl IpRange {
         }
     }
 
-    /// Check if ip addr is reserved/private
-    pub fn is_reserved(ip: &str) -> Result<bool> {
-        for i in ipv4::RESERVED_RANGES.lock().unwrap().iter() {
-            if IpRange::new(*i, "")?.contains(ip)? {
-                return Ok(true);
-            }
-        }
-
-        for i in ipv6::RESERVED_RANGES.lock().unwrap().iter() {
+    /// Check if ip addr is reserved/private for IPV4
+    pub fn is_reserved_ipv4(ip: &str) -> Result<bool> {
+        for i in ipv4::RESERVED_RANGES.iter() {
             if IpRange::new(*i, "")?.contains(ip)? {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Check if ip addr is reserved/private for IPV6
+    pub fn is_reserved_ipv6(ip: &str) -> Result<bool> {
+        for i in ipv6::RESERVED_RANGES.iter() {
+            if IpRange::new(*i, "")?.contains(ip)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Check if ip addr is reserved/private for IPV4 and IPV6
+    pub fn is_reserved(ip: &str) -> Result<bool> {
+        Ok(IpRange::is_reserved_ipv4(ip)? || IpRange::is_reserved_ipv6(ip)?)
     }
 }
 
@@ -310,6 +269,8 @@ impl IpRange {
 mod tests {
     use crate::iprange::IpRange;
     use crate::iprange::IpVer::{IPV4, IPV6};
+
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_initialization() {
