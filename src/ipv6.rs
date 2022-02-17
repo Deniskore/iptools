@@ -1,40 +1,47 @@
-// Copyright (c) 2020 Denis Avvakumov
+// Copyright (c) 2022 Denis Avvakumov
 // Licensed under the MIT license,  https://opensource.org/licenses/MIT
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
-use std::sync::Mutex;
 
-static HEX_RE: Lazy<Mutex<Regex>> =
-    Lazy::new(|| Mutex::new(Regex::new(r"^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$").unwrap()));
+use crate::error::Error;
+use crate::error::Result;
 
-static DOTTED_QUAD_RE: Lazy<Mutex<Regex>> = Lazy::new(|| {
-    Mutex::new(Regex::new(r"^([0-9a-f]{0,4}:){2,6}(\d{1,3}\.){0,3}\d{1,3}$").unwrap())
+static HEX_RE: Lazy<&Regex> = Lazy::new(|| {
+    static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
+    RE.get_or_init(|| regex::Regex::new(r"^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$").unwrap())
 });
 
-static CIDR_RE: Lazy<Mutex<Regex>> =
-    Lazy::new(|| Mutex::new(Regex::new(r"^([0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}/\d{1,3}$").unwrap()));
+static DOTTED_QUAD_RE: Lazy<&Regex> = Lazy::new(|| {
+    static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
+    RE.get_or_init(|| regex::Regex::new(r"^([0-9a-f]{0,4}:){2,6}(\d{1,3}\.){0,3}\d{1,3}$").unwrap())
+});
+
+static CIDR_RE: Lazy<&Regex> = Lazy::new(|| {
+    static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
+    RE.get_or_init(|| regex::Regex::new(r"^([0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}/\d{1,3}$").unwrap())
+});
 
 // Regex for validating an IPv6 in hex notation
-static RE_RFC1924: Lazy<Mutex<Regex>> =
-    Lazy::new(|| Mutex::new(Regex::new(r"^[0-9A-Za-z!#$%&()*+-;<=>?@^_`{|}~]{20}$").unwrap()));
+static RE_RFC1924: Lazy<&Regex> = Lazy::new(|| {
+    static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
+    RE.get_or_init(|| regex::Regex::new(r"^[0-9A-Za-z!#$%&()*+-;<=>?@^_`{|}~]{20}$").unwrap())
+});
 
 // RFC 1924 reverse lookup
 const RFC1924_REV: bool = true;
 
-#[allow(dead_code)]
 /// Last ip
 pub const MAX_IP: u128 = std::u128::MAX;
 
-#[allow(dead_code)]
 /// First ip
 pub const MIN_IP: u128 = 0;
 
 /// IETF and IANA reserved ip addresses
-pub static RESERVED_RANGES: Lazy<Mutex<Vec<&str>>> = Lazy::new(|| {
-    let vec = vec![
+pub static RESERVED_RANGES: Lazy<Vec<&str>> = Lazy::new(|| {
+    vec![
         UNSPECIFIED_ADDRESS,
         LOOPBACK,
         IPV4_MAPPED,
@@ -52,8 +59,7 @@ pub static RESERVED_RANGES: Lazy<Mutex<Vec<&str>>> = Lazy::new(|| {
         MULTICAST_LOCAL_ROUTERS,
         MULTICAST_LOCAL_DHCP,
         MULTICAST_SITE_DHCP,
-    ];
-    Mutex::new(vec)
+    ]
 });
 
 /// Absence of an address (only valid as source address)
@@ -132,19 +138,18 @@ const _RFC1924_ALPHABET: &[char] = &[
     '?', '@', '^', '_', '`', '{', '|', '}', '~',
 ];
 
-static RFC1924_REV_MAP: Lazy<Mutex<HashMap<char, i32>>> = Lazy::new(|| {
+static RFC1924_REV_MAP: Lazy<HashMap<char, i32>> = Lazy::new(|| {
     let mut i = -1;
-    let map = _RFC1924_ALPHABET
+    _RFC1924_ALPHABET
         .iter()
         .map(|c| {
             i += 1;
             (*c, i)
         })
-        .collect::<HashMap<_, _>>();
-    Mutex::new(map)
+        .collect::<HashMap<_, _>>()
 });
 
-/// Validates a hexidecimal IPV6 ip address
+/// Validate a hexidecimal IPV6 ip address
 ///
 /// # Example
 ///
@@ -154,12 +159,11 @@ static RFC1924_REV_MAP: Lazy<Mutex<HashMap<char, i32>>> = Lazy::new(|| {
 /// assert_eq!(validate_ip("1080:0:0:0:8:800:200c:417a"), true);
 /// ```
 pub fn validate_ip(ip: &str) -> bool {
-    if HEX_RE.lock().unwrap().is_match(ip) {
+    if HEX_RE.is_match(ip) {
         return ip.split("::").count() <= 2;
     }
-    if DOTTED_QUAD_RE.lock().unwrap().is_match(ip) {
-        let halves: Vec<&str> = ip.split("::").collect();
-        if halves.len() > 2 {
+    if DOTTED_QUAD_RE.is_match(ip) {
+        if ip.split("::").count() > 2 {
             return false;
         }
         let hextets: Vec<&str> = ip.split(':').collect();
@@ -174,31 +178,28 @@ pub fn validate_ip(ip: &str) -> bool {
     false
 }
 
-/// Converts a hexidecimal IPV6 address to a network byte order 128 bit integer
+/// Convert a hexidecimal IPV6 address to a network byte order 128 bit integer
 ///
 /// # Example
 ///
 /// ```
 /// use iptools::ipv6::ip2long;
-/// assert_eq!(ip2long("::"), Some(0));
-/// assert_eq!(ip2long("::1"), Some(1));
-/// assert_eq!(ip2long("2001:db8:85a3::8a2e:370:7334"),Some(0x20010db885a3000000008a2e03707334));
+/// assert_eq!(ip2long("::"), Ok(0));
+/// assert_eq!(ip2long("::1"), Ok(1));
+/// assert_eq!(ip2long("2001:db8:85a3::8a2e:370:7334"),Ok(0x20010db885a3000000008a2e03707334));
 /// ```
-pub fn ip2long(_ip: &str) -> Option<u128> {
+pub fn ip2long(_ip: &str) -> Result<u128> {
     let mut ip = _ip.to_string();
     if !validate_ip(&ip) {
-        return None;
+        return Err(Error::V6IP());
     }
 
     if ip.contains('.') {
         let mut chunks: Vec<String> = ip.split(':').map(|i| i.to_string()).collect();
-        if let Some(v4_int) = crate::ipv4::ip2long(&chunks.pop().unwrap()) {
-            chunks.push(format!("{:x}", ((v4_int >> 16) & 0xffff)));
-            chunks.push(format!("{:x}", (v4_int & 0xffff)));
-            ip = chunks.join(":");
-        } else {
-            return None;
-        }
+        let v4_int = crate::ipv4::ip2long(&chunks.pop().unwrap())?;
+        chunks.push(format!("{:x}", ((v4_int >> 16) & 0xffff)));
+        chunks.push(format!("{:x}", (v4_int & 0xffff)));
+        ip = chunks.join(":");
     }
 
     let halves: Vec<&str> = ip.split("::").collect();
@@ -220,12 +221,13 @@ pub fn ip2long(_ip: &str) -> Option<u128> {
         if h.is_empty() {
             h = tmp.borrow_mut();
         }
-        long_ip = (long_ip << 16) | u128::from_str_radix(h, 16).unwrap();
+        long_ip =
+            (long_ip << 16) | u128::from_str_radix(h, 16).map_err(|_| Error::V6IPConvert())?;
     }
-    Some(long_ip)
+    Ok(long_ip)
 }
 
-/// Converts a network byte order 128 bit integer to a canonical IPV6 address
+/// Convert a network byte order 128 bit integer to a canonical IPV6 address
 ///
 /// # Example
 ///
@@ -298,7 +300,7 @@ pub fn long2ip(long_ip: u128, rfc1924: bool) -> String {
     hextets.join(":")
 }
 
-/// Converts a network byte order 128 bit integer to an rfc1924 IPV6 address
+/// Convert a network byte order 128 bit integer to an rfc1924 IPV6 address
 ///
 /// # Example
 ///
@@ -320,7 +322,7 @@ pub fn long2rfc1924(long_ip: u128) -> String {
     return format!("{:0>20}", o.into_iter().collect::<String>());
 }
 
-/// Converts an RFC1924 IPV6 address to a network byte order 128 bit integer
+/// Convert an RFC1924 IPV6 address to a network byte order 128 bit integer
 ///
 /// # Example
 ///
@@ -331,14 +333,14 @@ pub fn long2rfc1924(long_ip: u128) -> String {
 /// assert_eq!(rfc19242long("pizza"), None);
 /// ```
 pub fn rfc19242long(s: &str) -> Option<u128> {
-    if !RE_RFC1924.lock().unwrap().is_match(s) {
+    if !RE_RFC1924.is_match(s) {
         return None;
     }
     let mut x = 0u128;
     if RFC1924_REV {
         for c in s.chars() {
             if let Some(mul_result) = x.checked_mul(85) {
-                x = mul_result + RFC1924_REV_MAP.lock().unwrap()[&c] as u128;
+                x = mul_result + RFC1924_REV_MAP[&c] as u128;
             } else {
                 return None;
             }
@@ -349,7 +351,7 @@ pub fn rfc19242long(s: &str) -> Option<u128> {
     Some(x)
 }
 
-/// Validates a CIDR notation ip address
+/// Validate a CIDR notation ip address
 ///
 /// # Example
 ///
@@ -361,7 +363,7 @@ pub fn rfc19242long(s: &str) -> Option<u128> {
 /// assert_eq!(validate_cidr("::/129"), false);
 /// ```
 pub fn validate_cidr(cidr: &str) -> bool {
-    if CIDR_RE.lock().unwrap().is_match(cidr) {
+    if CIDR_RE.is_match(cidr) {
         let ip_mask: Vec<&str> = cidr.split('/').collect();
         if validate_ip(ip_mask[0]) {
             if ip_mask[1].parse::<u128>().unwrap() > 128 {
@@ -375,42 +377,40 @@ pub fn validate_cidr(cidr: &str) -> bool {
     false
 }
 
-/// Converts a CIDR notation ip address into a tuple containing the network block start and end addresses
+/// Convert a CIDR notation ip address into a tuple containing the network block start and end addresses
 ///
 /// # Example
 ///
 /// ```
 /// use iptools::ipv6::cidr2block;
 /// assert_eq!(cidr2block("2001:db8::/48"),
-///           Some(("2001:db8::".to_string(), "2001:db8:0:ffff:ffff:ffff:ffff:ffff".to_string())));
+///           Ok(("2001:db8::".to_string(), "2001:db8:0:ffff:ffff:ffff:ffff:ffff".to_string())));
 /// assert_eq!(cidr2block("::/0"),
-///           Some(("::".to_string(), "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".to_string())));
+///           Ok(("::".to_string(), "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".to_string())));
 /// ```
-pub fn cidr2block(cidr: &str) -> Option<(String, String)> {
+pub fn cidr2block(cidr: &str) -> Result<(String, String)> {
     if !validate_cidr(cidr) {
-        return None;
+        return Err(Error::V6CIDR());
     }
 
     let ip_prefix: Vec<&str> = cidr.split('/').collect();
     let prefix = ip_prefix[1].parse::<u128>().unwrap();
-    if let Some(ip) = ip2long(ip_prefix[0]) {
-        let shift: u32 = 128 - prefix as u32;
-        let block_start: u128 = ip
-            .checked_shr(shift)
-            .unwrap_or(0)
-            .checked_shl(shift)
-            .unwrap_or(0);
+    let ip = ip2long(ip_prefix[0])?;
+    let shift: u32 = 128 - prefix as u32;
+    let block_start: u128 = ip
+        .checked_shr(shift)
+        .unwrap_or(0)
+        .checked_shl(shift)
+        .unwrap_or(0);
 
-        let mut mask = std::u128::MAX;
-        if let Some(shift) = 1u128.checked_shl(shift) {
-            if let Some(sub) = shift.checked_sub(1) {
-                mask = sub;
-            }
+    let mut mask = std::u128::MAX;
+    if let Some(shift) = 1u128.checked_shl(shift) {
+        if let Some(sub) = shift.checked_sub(1) {
+            mask = sub;
         }
-        let block_end = block_start | mask;
-        return Some((long2ip(block_start, false), long2ip(block_end, false)));
     }
-    None
+    let block_end = block_start | mask;
+    Ok((long2ip(block_start, false), long2ip(block_end, false)))
 }
 
 #[cfg(test)]
@@ -419,6 +419,8 @@ mod tests {
         cidr2block, ip2long, long2ip, long2rfc1924, rfc19242long, validate_cidr, validate_ip,
         MAX_IP, MIN_IP,
     };
+
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_validate_ip() {
@@ -438,33 +440,33 @@ mod tests {
 
     #[test]
     fn test_ip2long() {
-        assert_eq!(ip2long("::"), Some(0));
-        assert_eq!(ip2long("::1"), Some(1));
+        assert_eq!(ip2long("::"), Ok(0));
+        assert_eq!(ip2long("::1"), Ok(1));
         assert_eq!(
             ip2long("2001:db8:85a3::8a2e:370:7334"),
-            Some(0x20010db885a3000000008a2e03707334)
+            Ok(0x20010db885a3000000008a2e03707334)
         );
         assert_eq!(
             ip2long("2001:db8:85a3:0:0:8a2e:370:7334"),
-            Some(0x20010db885a3000000008a2e03707334)
+            Ok(0x20010db885a3000000008a2e03707334)
         );
         assert_eq!(
             ip2long("2001:0db8:85a3:0000:0000:8a2e:0370:7334"),
-            Some(0x20010db885a3000000008a2e03707334)
+            Ok(0x20010db885a3000000008a2e03707334)
         );
         assert_eq!(
             ip2long("2001:db8::1:0:0:1"),
-            Some(0x20010db8000000000001000000000001)
+            Ok(0x20010db8000000000001000000000001)
         );
-        assert_eq!(ip2long("::ffff:192.0.2.128"), Some(281473902969472));
+        assert_eq!(ip2long("::ffff:192.0.2.128"), Ok(281473902969472));
         assert_eq!(
             ip2long("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"),
-            Some(0xffffffffffffffffffffffffffffffff)
+            Ok(0xffffffffffffffffffffffffffffffff)
         );
-        assert_eq!(ip2long("ff::ff::ff"), None);
+        assert_eq!(ip2long("ff::ff::ff").is_err(), true);
         assert_eq!(
             ip2long("1080:0:0:0:8:800:200C:417A"),
-            Some(21932261930451111902915077091070067066)
+            Ok(21932261930451111902915077091070067066)
         );
     }
 
@@ -529,14 +531,14 @@ mod tests {
     fn test_cidr2block() {
         assert_eq!(
             cidr2block("2001:db8::/48"),
-            Some((
+            Ok((
                 "2001:db8::".to_string(),
                 "2001:db8:0:ffff:ffff:ffff:ffff:ffff".to_string()
             ))
         );
         assert_eq!(
             cidr2block("::/0"),
-            Some((
+            Ok((
                 "::".to_string(),
                 "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".to_string()
             ))
