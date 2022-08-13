@@ -167,10 +167,14 @@ pub fn validate_ip(ip: &str) -> bool {
             return false;
         }
         let hextets: Vec<&str> = ip.split(':').collect();
-        let quads: Vec<&str> = hextets.last().unwrap().split('.').collect();
-        for q in quads {
-            if q.parse::<i32>().unwrap() > 255 {
-                return false;
+        if let Some(last_hextet) = hextets.last() {
+            let quads: Vec<&str> = last_hextet.split('.').collect();
+            for q in quads {
+                if let Ok(q) = q.parse::<i32>() {
+                    if q > 255 {
+                        return false;
+                    }
+                }
             }
         }
         return true;
@@ -196,7 +200,7 @@ pub fn ip2long(_ip: &str) -> Result<u128> {
 
     if ip.contains('.') {
         let mut chunks: Vec<String> = ip.split(':').map(|i| i.to_string()).collect();
-        let v4_int = crate::ipv4::ip2long(&chunks.pop().unwrap())?;
+        let v4_int = crate::ipv4::ip2long(&chunks.pop().ok_or(Error::V6IPConvert())?)?;
         chunks.push(format!("{:x}", ((v4_int >> 16) & 0xffff)));
         chunks.push(format!("{:x}", (v4_int & 0xffff)));
         ip = chunks.join(":");
@@ -319,7 +323,7 @@ pub fn long2rfc1924(long_ip: u128) -> String {
     }
     o.push(_RFC1924_ALPHABET[r as usize]);
     o.reverse();
-    return format!("{:0>20}", o.into_iter().collect::<String>());
+    format!("{:0>20}", o.into_iter().collect::<String>())
 }
 
 /// Convert an RFC1924 IPV6 address to a network byte order 128 bit integer
@@ -365,8 +369,11 @@ pub fn rfc19242long(s: &str) -> Option<u128> {
 pub fn validate_cidr(cidr: &str) -> bool {
     if CIDR_RE.is_match(cidr) {
         let ip_mask: Vec<&str> = cidr.split('/').collect();
-        if validate_ip(ip_mask[0]) {
-            if ip_mask[1].parse::<u128>().unwrap() > 128 {
+        if !validate_ip(ip_mask[0]) {
+            return false;
+        }
+        if let Ok(parsed_mask) = ip_mask[1].parse::<u128>() {
+            if parsed_mask > 128 {
                 return false;
             }
         } else {
@@ -394,7 +401,7 @@ pub fn cidr2block(cidr: &str) -> Result<(String, String)> {
     }
 
     let ip_prefix: Vec<&str> = cidr.split('/').collect();
-    let prefix = ip_prefix[1].parse::<u128>().unwrap();
+    let prefix = ip_prefix[1].parse::<u128>().map_err(|_| Error::V6CIDR())?;
     let ip = ip2long(ip_prefix[0])?;
     let shift: u32 = 128 - prefix as u32;
     let block_start: u128 = ip

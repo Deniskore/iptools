@@ -10,7 +10,7 @@ This is a port of package [iptools](https://github.com/bd808/python-iptools) fro
 Add the following dependency to your Cargo manifest:
 ```
 [dependencies]
-iptools = "0.2.0"
+iptools = "0.2.2"
 ```
 
 ## Example of usage

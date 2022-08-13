@@ -129,7 +129,7 @@ pub const RESERVED: &str = "240.0.0.0/4";
 pub const BROADCAST: &str = "255.255.255.255";
 
 pub fn bin_u32(number: u32) -> String {
-    return format!("0b{:b}", number);
+    format!("0b{:b}", number)
 }
 /// Validates a dotted-quad ip address
 ///
@@ -147,8 +147,10 @@ pub fn validate_ip(ip: &str) -> bool {
     if IPV4_RE.is_match(ip) {
         let quads = ip.split('.');
         for q in quads {
-            if q.parse::<u32>().unwrap() > 255 {
-                return false;
+            if let Ok(q) = q.parse::<u32>() {
+                if q > 255 {
+                    return false;
+                }
             }
         }
         return true;
@@ -173,8 +175,10 @@ pub fn validate_cidr(cidr: &str) -> bool {
     if CIDR_RE.is_match(cidr) {
         let ip_mask = cidr.split('/').collect::<Vec<_>>();
         if validate_ip(ip_mask[0]) {
-            if ip_mask[1].parse::<i32>().unwrap() > 32 {
-                return false;
+            if let Ok(mask) = ip_mask[1].parse::<i32>() {
+                if mask > 32 {
+                    return false;
+                }
             }
         } else {
             return false;
@@ -255,12 +259,13 @@ pub fn ip2long(ip: &str) -> Result<u32> {
     if quads.len() == 1 {
         quads.extend(vec![0, 0, 0]);
     } else if quads.len() < 4 {
-        let index = quads
-            .iter()
-            .position(|i| i == quads.last().unwrap())
-            .unwrap();
-        for _i in 0..((quads.len() as i32) - 4).abs() {
-            quads.insert(index, 0);
+        if let Some(quad) = quads.last() {
+            let index = quads.iter().position(|i| i == quad).ok_or(Error::V4IP())?;
+            for _i in 0..((quads.len() as i32) - 4).abs() {
+                quads.insert(index, 0);
+            }
+        } else {
+            return Err(Error::V4IP());
         }
     }
 
@@ -293,7 +298,11 @@ pub fn ip2network(ip: &str) -> Option<u32> {
     let mut netw: u32 = 0;
     for i in 0..4 {
         let val = if quads.len() > i {
-            quads[i].parse::<u32>().unwrap()
+            if let Ok(u) = quads[i].parse::<u32>() {
+                u
+            } else {
+                return None;
+            }
         } else {
             0
         };
@@ -311,13 +320,13 @@ pub fn ip2network(ip: &str) -> Option<u32> {
 /// assert_eq!(long2ip(2130706433), "127.0.0.1");
 /// ```
 pub fn long2ip(ip_dec: u32) -> String {
-    return format!(
+    format!(
         "{}.{}.{}.{}",
         ip_dec >> 24 & 255,
         ip_dec >> 16 & 255,
         ip_dec >> 8 & 255,
         ip_dec & 255
-    );
+    )
 }
 
 /// Convert a dotted-quad ip address to a hex encoded number
@@ -330,7 +339,7 @@ pub fn long2ip(ip_dec: u32) -> String {
 /// assert_eq!(ip2hex("127.0.0.1"), Ok("7f000001".to_string()));
 /// ```
 pub fn ip2hex(ip: &str) -> Result<String> {
-    return Ok(format!("{:08x}", ip2long(ip)?));
+    Ok(format!("{:08x}", ip2long(ip)?))
 }
 
 /// Convert a hex encoded integer to a dotted-quad ip address
@@ -363,10 +372,10 @@ pub fn cidr2block(cidr: &str) -> Result<(String, String)> {
     }
 
     let ip_prefix: Vec<&str> = cidr.split('/').collect();
-    let prefix = ip_prefix[1].parse::<u32>().unwrap();
-
-    if let Some(network) = ip2network(ip_prefix[0]) {
-        return Ok(_block_from_ip_and_prefix(network, prefix));
+    if let Ok(prefix) = ip_prefix[1].parse::<u32>() {
+        if let Some(network) = ip2network(ip_prefix[0]) {
+            return Ok(_block_from_ip_and_prefix(network, prefix));
+        }
     }
     Err(Error::V4CIDR())
 }
