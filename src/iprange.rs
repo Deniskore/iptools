@@ -8,7 +8,7 @@ use crate::ipv4;
 use crate::ipv6;
 use std::hash::{Hash, Hasher};
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum IpVer {
     IPV4,
     IPV6,

@@ -3,7 +3,7 @@ use std::fmt::Display;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     V4CIDR(),
     V6CIDR(),
