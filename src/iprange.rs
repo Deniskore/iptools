@@ -31,23 +31,15 @@ impl Iterator for IpRange {
         if self.iter_ip == self.end_ip {
             return None;
         }
-        if let Some(ip) = self.iter_ip.checked_add(1) {
-            if ip <= self.end_ip {
-                self.iter_ip = ip;
-            } else {
-                return None;
-            }
-            if ip > self.start_ip && ip <= self.end_ip {
-                self.start_ip = self.iter_ip;
-            }
-
-            return match self.ip_version {
-                IPV4 => Some(ipv4::long2ip(ip as u32)),
-                IPV6 => Some(ipv6::long2ip(ip, false)),
-                IPVUnknown => None,
-            };
+        self.iter_ip = match self.iter_ip.checked_add(1) {
+            Some(x) => x,
+            None => return None,
+        };
+        match self.ip_version {
+            IPV4 => Some(ipv4::long2ip(self.iter_ip as u32)),
+            IPV6 => Some(ipv6::long2ip(self.iter_ip, false)),
+            IPVUnknown => None,
         }
-        None
     }
 }
 
@@ -65,7 +57,7 @@ impl PartialEq for IpRange {
 }
 
 // Converts a string address to a numeric value
-fn _address2long(address: &str, ip_ver: IpVer) -> Result<u128> {
+fn _address2long(address: &str, ip_ver: &IpVer) -> Result<u128> {
     match ip_ver {
         IPV4 => ipv4::ip2long(address).map(|ip_long| ip_long as u128),
         IPV6 => ipv6::ip2long(address),
@@ -76,63 +68,45 @@ fn _address2long(address: &str, ip_ver: IpVer) -> Result<u128> {
 /// Range of ip addresses (IPV4, IPV6)
 /// Convert a CIDR notation address, ip address and subnet, tuple of ip addresses or start and end addresses into iterable object
 impl IpRange {
-    pub fn new(_start: &str, _end: &str) -> Result<IpRange> {
-        let mut start = _start.to_string();
-        let mut end = _end.to_string();
-        let mut ip_ver: IpVer = IPVUnknown;
+    pub fn new(start: &str, end: &str) -> Result<IpRange> {
+        let mut start = start.to_string();
+        let mut end = end.to_string();
 
-        if _end.is_empty() {
+        if end.is_empty() {
             end = start.clone();
         }
 
-        if ipv4::validate_cidr(_start) {
-            let result = ipv4::cidr2block(_start);
-            match result {
-                Ok(result) => {
-                    ip_ver = IPV4;
+        let ip_ver = match (ipv4::validate_cidr(&start), ipv6::validate_cidr(&start)) {
+            (true, _) => {
+                let result = ipv4::cidr2block(&start)?;
+                start = result.0;
+                end = result.1;
+                IPV4
+            }
+            (_, true) => {
+                let result = ipv6::cidr2block(&start)?;
+                start = result.0;
+                end = result.1;
+                IPV6
+            }
+            _ => {
+                if ipv4::validate_subnet(&start) {
+                    let result = ipv4::subnet2block(&start).ok_or(V4Subnet())?;
                     start = result.0;
                     end = result.1;
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-        } else if ipv6::validate_cidr(_start) {
-            let result = ipv6::cidr2block(_start);
-            match result {
-                Ok(result) => {
-                    ip_ver = IPV6;
-                    start = result.0;
-                    end = result.1;
-                }
-                Err(e) => {
-                    return Err(e);
+                    IPV4
+                } else if ipv4::validate_ip(&start) {
+                    IPV4
+                } else if ipv6::validate_ip(&start) {
+                    IPV6
+                } else {
+                    return Err(UnknownVersion());
                 }
             }
-        } else if ipv4::validate_subnet(_start) {
-            let result = ipv4::subnet2block(_start);
-            match result {
-                Some(result) => {
-                    ip_ver = IPV4;
-                    start = result.0;
-                    end = result.1;
-                }
-                None => {
-                    return Err(V4Subnet());
-                }
-            }
-        } else if ipv4::validate_ip(_start) {
-            ip_ver = IPV4
-        } else if ipv6::validate_ip(_start) {
-            ip_ver = IPV6;
-        }
+        };
 
-        if ip_ver == IPVUnknown {
-            return Err(UnknownVersion());
-        }
-
-        let start_ip = _address2long(&start, ip_ver.clone())?;
-        let end_ip = _address2long(&end, ip_ver.clone())?;
+        let start_ip = _address2long(&start, &ip_ver)?;
+        let end_ip = _address2long(&end, &ip_ver)?;
 
         let iter_ip = start_ip.checked_sub(1).unwrap_or(start_ip);
 
@@ -197,21 +171,21 @@ impl IpRange {
         if ipv4::validate_cidr(ip) {
             is_range = true;
             let tuple = ipv4::cidr2block(ip)?;
-            start_ip = _address2long(&tuple.0, IPV4)?;
-            end_ip = _address2long(&tuple.1, IPV4)?;
+            start_ip = _address2long(&tuple.0, &IPV4)?;
+            end_ip = _address2long(&tuple.1, &IPV4)?;
             is_valid = true;
         } else if ipv6::validate_cidr(ip) {
             is_valid = true;
             is_range = true;
             let tuple = ipv6::cidr2block(ip)?;
-            start_ip = _address2long(&tuple.0, IPV6)?;
-            end_ip = _address2long(&tuple.1, IPV6)?;
+            start_ip = _address2long(&tuple.0, &IPV6)?;
+            end_ip = _address2long(&tuple.1, &IPV6)?;
         } else if ipv6::validate_ip(ip) {
             is_valid = true;
-            addr = _address2long(ip, IPV6)?;
+            addr = _address2long(ip, &IPV6)?;
         } else if ipv4::validate_ip(ip) {
             is_valid = true;
-            addr = _address2long(ip, IPV4)?;
+            addr = _address2long(ip, &IPV4)?;
         }
 
         if !is_valid {
@@ -242,7 +216,7 @@ impl IpRange {
     /// Check if ip addr is reserved/private for IPV4
     pub fn is_reserved_ipv4(ip: &str) -> Result<bool> {
         for i in ipv4::RESERVED_RANGES.iter() {
-            if IpRange::new(*i, "")?.contains(ip)? {
+            if IpRange::new(i, "")?.contains(ip)? {
                 return Ok(true);
             }
         }
@@ -252,7 +226,7 @@ impl IpRange {
     /// Check if ip addr is reserved/private for IPV6
     pub fn is_reserved_ipv6(ip: &str) -> Result<bool> {
         for i in ipv6::RESERVED_RANGES.iter() {
-            if IpRange::new(*i, "")?.contains(ip)? {
+            if IpRange::new(i, "")?.contains(ip)? {
                 return Ok(true);
             }
         }

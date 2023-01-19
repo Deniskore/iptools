@@ -1,10 +1,10 @@
 // Copyright (c) 2022 Denis Avvakumov
 // Licensed under the MIT license,  https://opensource.org/licenses/MIT
 
+use ahash::AHashMap;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::borrow::BorrowMut;
-use std::collections::HashMap;
 
 use crate::error::Error;
 use crate::error::Result;
@@ -31,7 +31,7 @@ static RE_RFC1924: Lazy<&Regex> = Lazy::new(|| {
 });
 
 // RFC 1924 reverse lookup
-const RFC1924_REV: bool = true;
+const _RFC1924_REV: bool = true;
 
 /// Last ip
 pub const MAX_IP: u128 = std::u128::MAX;
@@ -138,7 +138,7 @@ const _RFC1924_ALPHABET: &[char] = &[
     '?', '@', '^', '_', '`', '{', '|', '}', '~',
 ];
 
-static RFC1924_REV_MAP: Lazy<HashMap<char, i32>> = Lazy::new(|| {
+static RFC1924_REV_MAP: Lazy<AHashMap<char, i32>> = Lazy::new(|| {
     let mut i = -1;
     _RFC1924_ALPHABET
         .iter()
@@ -146,7 +146,7 @@ static RFC1924_REV_MAP: Lazy<HashMap<char, i32>> = Lazy::new(|| {
             i += 1;
             (*c, i)
         })
-        .collect::<HashMap<_, _>>()
+        .collect::<AHashMap<_, _>>()
 });
 
 /// Validate a hexidecimal IPV6 ip address
@@ -159,27 +159,24 @@ static RFC1924_REV_MAP: Lazy<HashMap<char, i32>> = Lazy::new(|| {
 /// assert_eq!(validate_ip("1080:0:0:0:8:800:200c:417a"), true);
 /// ```
 pub fn validate_ip(ip: &str) -> bool {
-    if HEX_RE.is_match(ip) {
-        return ip.split("::").count() <= 2;
-    }
-    if DOTTED_QUAD_RE.is_match(ip) {
+    let is_hex = HEX_RE.is_match(ip);
+    let is_dotted_quad = DOTTED_QUAD_RE.is_match(ip);
+    if is_hex {
+        ip.split("::").count() <= 2
+    } else if is_dotted_quad {
         if ip.split("::").count() > 2 {
             return false;
         }
-        let hextets: Vec<&str> = ip.split(':').collect();
-        if let Some(last_hextet) = hextets.last() {
-            let quads: Vec<&str> = last_hextet.split('.').collect();
-            for q in quads {
-                if let Ok(q) = q.parse::<i32>() {
-                    if q > 255 {
-                        return false;
-                    }
-                }
-            }
-        }
-        return true;
+        let quads: Vec<&str> = ip
+            .split(':')
+            .last()
+            .map_or(vec![], |last| last.split('.').collect());
+        quads
+            .iter()
+            .all(|q| q.parse::<i32>().ok().map_or(false, |q| q <= 255))
+    } else {
+        false
     }
-    false
 }
 
 /// Convert a hexidecimal IPV6 address to a network byte order 128 bit integer
@@ -192,35 +189,37 @@ pub fn validate_ip(ip: &str) -> bool {
 /// assert_eq!(ip2long("::1"), Ok(1));
 /// assert_eq!(ip2long("2001:db8:85a3::8a2e:370:7334"),Ok(0x20010db885a3000000008a2e03707334));
 /// ```
-pub fn ip2long(_ip: &str) -> Result<u128> {
-    let mut ip = _ip.to_string();
+pub fn ip2long(ip: &str) -> Result<u128> {
+    let mut ip = ip.to_string();
     if !validate_ip(&ip) {
         return Err(Error::V6IP());
     }
 
     if ip.contains('.') {
-        let mut chunks: Vec<String> = ip.split(':').map(|i| i.to_string()).collect();
-        let v4_int = crate::ipv4::ip2long(&chunks.pop().ok_or(Error::V6IPConvert())?)?;
-        chunks.push(format!("{:x}", ((v4_int >> 16) & 0xffff)));
-        chunks.push(format!("{:x}", (v4_int & 0xffff)));
+        let mut chunks: Vec<&str> = ip.split(':').collect();
+        let v4_int = crate::ipv4::ip2long(chunks.pop().ok_or(Error::V6IPConvert())?)?;
+        let lower = format!("{:x}", ((v4_int >> 16) & 0xffff));
+        let upper = format!("{:x}", (v4_int & 0xffff));
+        chunks.push(&lower);
+        chunks.push(&upper);
         ip = chunks.join(":");
     }
 
     let halves: Vec<&str> = ip.split("::").collect();
-    let mut hextets: Vec<String> = halves[0].split(':').map(|i| i.to_string()).collect();
+    let mut hextets: Vec<&str> = halves[0].split(':').collect();
     let h2 = if halves.len() == 2 {
         halves[1].split(':').collect()
     } else {
         Vec::new()
     };
     for _z in 0..8 - (hextets.len() + h2.len()) {
-        hextets.push("0".to_string());
+        hextets.push("0");
     }
     for h in h2 {
-        hextets.push(h.to_string());
+        hextets.push(h);
     }
     let mut long_ip = 0u128;
-    let mut tmp = "0".to_string();
+    let mut tmp = "0";
     for mut h in hextets.iter_mut() {
         if h.is_empty() {
             h = tmp.borrow_mut();
@@ -248,20 +247,10 @@ pub fn long2ip(long_ip: u128, rfc1924: bool) -> String {
 
     let hex_str = format!("{:0>32x}", long_ip);
     let mut hextets = hex_str
-        .chars()
-        .enumerate()
-        .flat_map(|(i, c)| {
-            if i != 0 && i % 4 == 0 {
-                Some(' ')
-            } else {
-                None
-            }
-            .into_iter()
-            .chain(std::iter::once(c))
-        })
-        .collect::<String>()
-        .split(' ')
-        .map(|item| format!("{:x}", u32::from_str_radix(item, 16).unwrap()))
+        .as_bytes()
+        .chunks(4)
+        .map(|chunk| u32::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap())
+        .map(|item| format!("{:x}", item))
         .collect::<Vec<String>>();
 
     let (mut dc_start, mut dc_len): (i32, i32) = (-1, 0);
@@ -341,16 +330,12 @@ pub fn rfc19242long(s: &str) -> Option<u128> {
         return None;
     }
     let mut x = 0u128;
-    if RFC1924_REV {
-        for c in s.chars() {
-            if let Some(mul_result) = x.checked_mul(85) {
-                x = mul_result + RFC1924_REV_MAP[&c] as u128;
-            } else {
-                return None;
-            }
+    for c in s.chars() {
+        if let Some(mul_result) = x.checked_mul(85) {
+            x = mul_result + RFC1924_REV_MAP[&c] as u128;
+        } else {
+            return None;
         }
-    } else {
-        // TODO ?
     }
     Some(x)
 }
@@ -367,21 +352,18 @@ pub fn rfc19242long(s: &str) -> Option<u128> {
 /// assert_eq!(validate_cidr("::/129"), false);
 /// ```
 pub fn validate_cidr(cidr: &str) -> bool {
-    if CIDR_RE.is_match(cidr) {
-        let ip_mask: Vec<&str> = cidr.split('/').collect();
-        if !validate_ip(ip_mask[0]) {
-            return false;
-        }
-        if let Ok(parsed_mask) = ip_mask[1].parse::<u128>() {
-            if parsed_mask > 128 {
-                return false;
-            }
-        } else {
-            return false;
-        }
-        return true;
+    if !CIDR_RE.is_match(cidr) {
+        return false;
     }
-    false
+    let ip_mask: Vec<&str> = cidr.split('/').collect();
+    if !validate_ip(ip_mask[0])
+        || ip_mask[1]
+            .parse::<u128>()
+            .map_or(true, |parsed_mask| parsed_mask > 128)
+    {
+        return false;
+    }
+    true
 }
 
 /// Convert a CIDR notation ip address into a tuple containing the network block start and end addresses
