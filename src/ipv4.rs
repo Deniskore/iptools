@@ -144,18 +144,10 @@ pub fn bin_u32(number: u32) -> String {
 /// assert_eq!(validate_ip("127.0.0.x"), false);
 /// ```
 pub fn validate_ip(ip: &str) -> bool {
-    if IPV4_RE.is_match(ip) {
-        let quads = ip.split('.');
-        for q in quads {
-            if let Ok(q) = q.parse::<u32>() {
-                if q > 255 {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-    false
+    IPV4_RE.is_match(ip)
+        && ip
+            .split('.')
+            .all(|q| q.parse::<u32>().map_or(false, |q| q < 256))
 }
 
 /// Validate a [CIDR](https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing) notation
@@ -176,14 +168,11 @@ pub fn validate_cidr(cidr: &str) -> bool {
         let ip_mask = cidr.split('/').collect::<Vec<_>>();
         if validate_ip(ip_mask[0]) {
             if let Ok(mask) = ip_mask[1].parse::<i32>() {
-                if mask > 32 {
-                    return false;
+                if mask < 33 {
+                    return true;
                 }
             }
-        } else {
-            return false;
         }
-        return true;
     }
     false
 }
@@ -198,23 +187,11 @@ pub fn validate_cidr(cidr: &str) -> bool {
 /// assert_eq!(validate_netmask("128.0.0.1"), false);
 /// ```
 pub fn validate_netmask(netmask: &str) -> bool {
-    if validate_ip(netmask) {
-        if let Some(ip) = ip2network(netmask) {
+    validate_ip(netmask)
+        && ip2network(netmask).map_or(false, |ip| {
             let mask = format!("{:0>32}", bin_u32(ip).trim_start_matches("0b"));
-            let mut seen0 = false;
-            for c in mask.chars() {
-                if '1' == c {
-                    if seen0 {
-                        return false;
-                    }
-                } else {
-                    seen0 = true;
-                }
-            }
-            return true;
-        }
-    }
-    false
+            !mask.contains("01")
+        })
 }
 
 /// Validate a dotted-quad ip adress including a netmask
@@ -232,14 +209,10 @@ pub fn validate_netmask(netmask: &str) -> bool {
 /// assert_eq!(validate_subnet("128.0.0.1"), false);
 /// ```
 pub fn validate_subnet(subnet: &str) -> bool {
-    if subnet.contains('/') {
+    subnet.contains('/') && {
         let start_mask: Vec<&str> = subnet.split('/').collect::<Vec<_>>();
-        if start_mask.len() > 2 {
-            return false;
-        }
-        return validate_ip(start_mask[0]) && validate_netmask(start_mask[1]);
+        start_mask.len() == 2 && validate_ip(start_mask[0]) && validate_netmask(start_mask[1])
     }
-    false
 }
 
 /// Convert a dotted-quad ip address to a network byte order 32 bit integer
@@ -294,21 +267,23 @@ pub fn ip2network(ip: &str) -> Option<u32> {
     if !validate_ip(ip) {
         return None;
     }
-    let quads: Vec<&str> = ip.split('.').collect();
-    let mut netw: u32 = 0;
-    for i in 0..4 {
-        let val = if quads.len() > i {
-            if let Ok(u) = quads[i].parse::<u32>() {
-                u
-            } else {
-                return None;
-            }
-        } else {
-            0
-        };
-        netw = (netw << 8) | val;
+
+    let quads: Vec<u32> = ip
+        .split('.')
+        .filter_map(|w| w.parse().ok())
+        .take(4)
+        .collect();
+
+    if quads.len() < 4 {
+        let mut netw: u32 = 0;
+        for i in 0..4 {
+            let val = quads.get(i).unwrap_or(&0);
+            netw = (netw << 8) | val;
+        }
+        Some(netw)
+    } else {
+        Some(((quads[0]) << 24) | ((quads[1]) << 16) | ((quads[2]) << 8) | (quads[3]))
     }
-    Some(netw)
 }
 
 /// Convert a network byte order 32 bit integer to a dotted quad ip address
