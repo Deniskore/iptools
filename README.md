@@ -10,7 +10,7 @@ This is a port of package [iptools](https://github.com/bd808/python-iptools) fro
 Add the following dependency to your Cargo manifest:
 ```
 [dependencies]
-iptools = "0.2.4"
+iptools = "0.2.5"
 ```
 
 ## Example of usage
@@ -30,7 +30,7 @@ println!("{:?}", first_range.contains("127.0.0.3"));
 ```
 
 ## Supported Rust Versions
-Rust 1.61.0+
+Rust 1.65.0+
 
 ## License
 
