@@ -42,7 +42,7 @@ pub static RESERVED_RANGES: Lazy<Vec<&str>> = Lazy::new(|| {
 
 #[allow(dead_code)]
 /// Last ip
-pub const MAX_IP: u32 = std::u32::MAX;
+pub const MAX_IP: u32 = u32::MAX;
 
 /// First ip
 pub const MIN_IP: u32 = 0;
@@ -406,7 +406,7 @@ fn _block_from_ip_and_prefix(ip: u32, prefix: u32) -> (String, String) {
         .checked_shl(shift)
         .unwrap_or(0);
 
-    let mut mask = std::u32::MAX;
+    let mut mask = u32::MAX;
     if let Some(shift) = 1u32.checked_shl(shift) {
         if let Some(sub) = shift.checked_sub(1) {
             mask = sub;

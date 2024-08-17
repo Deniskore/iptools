@@ -34,7 +34,7 @@ static RE_RFC1924: Lazy<&Regex> = Lazy::new(|| {
 const _RFC1924_REV: bool = true;
 
 /// Last ip
-pub const MAX_IP: u128 = std::u128::MAX;
+pub const MAX_IP: u128 = u128::MAX;
 
 /// First ip
 pub const MIN_IP: u128 = 0;
@@ -392,7 +392,7 @@ pub fn cidr2block(cidr: &str) -> Result<(String, String)> {
         .checked_shl(shift)
         .unwrap_or(0);
 
-    let mut mask = std::u128::MAX;
+    let mut mask = u128::MAX;
     if let Some(shift) = 1u128.checked_shl(shift) {
         if let Some(sub) = shift.checked_sub(1) {
             mask = sub;
