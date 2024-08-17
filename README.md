@@ -10,13 +10,13 @@ This is a port of package [iptools](https://github.com/bd808/python-iptools) fro
 Add the following dependency to your Cargo manifest:
 ```
 [dependencies]
-iptools = "0.2.5"
+iptools = "0.3.0"
 ```
 
 ## Example of usage
 ```rust
-let first_range = IpRange::new("127.0.0.1/16", "").unwrap();
-let second_range = IpRange::new("127.0.0.1", "127.0.0.255").unwrap();
+let first_range = IpRange::<IPv4>::new("127.0.0.1/16", "").unwrap();
+let second_range = IpRange::<IPv4>::new("127.0.0.1", "127.0.0.255").unwrap();
 // Print range (tuple)
 println!("{:?} {:?}", first_range.get_range(), second_range.get_range());
 // Ip address range iterator
@@ -30,7 +30,7 @@ println!("{:?}", first_range.contains("127.0.0.3"));
 ```
 
 ## Supported Rust Versions
-Rust 1.65.0+
+Rust 1.70.0+
 
 ## License
 
