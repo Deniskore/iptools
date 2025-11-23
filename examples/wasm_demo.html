@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iptools WASM</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #09090b;
+            --bg-card: #18181b;
+            --bg-input: #27272a;
+            --accent: #8b5cf6;
+            --accent-hover: #7c3aed;
+            --accent-glow: rgba(139, 92, 246, 0.3);
+            --text-main: #e4e4e7;
+            --text-muted: #a1a1aa;
+            --border: #3f3f46;
+            --success: #10b981;
+            --error: #f43f5e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: linear-gradient(135deg, #09090b 0%, #18181b 100%);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1000px;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 1.5rem;
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(16, 185, 129, 0.05) 100%);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.1);
+        }
+
+        h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+        }
+
+        .status {
+            padding: 0.375rem 0.875rem;
+            border-radius: 999px;
+            background: rgba(16, 185, 129, 0.2);
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+        }
+
+        .toggle-group {
+            display: inline-flex;
+            gap: 0.5rem;
+            padding: 0.375rem;
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .toggle-btn {
+            padding: 0.5rem 1.25rem;
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--text-muted);
+            font-family: 'Outfit', sans-serif;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .toggle-btn.active {
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+            color: white;
+            box-shadow: 0 4px 12px var(--accent-glow);
+        }
+
+        .toggle-btn:not(.active):hover {
+            background: var(--bg-input);
+            color: var(--text-main);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 1.25rem;
+        }
+
+        .card {
+            background: linear-gradient(135deg, #1a1a1d 0%, #18181b 100%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .card:hover {
+            border-color: var(--accent);
+            box-shadow: 0 8px 24px var(--accent-glow);
+            transform: translateY(-2px);
+        }
+
+        .card-header {
+            font-weight: 600;
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+            font-size: 0.9rem;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        input {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        input::placeholder {
+            color: var(--text-muted);
+            opacity: 0.5;
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px var(--accent-glow);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px var(--accent-glow);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .result {
+            font-family: 'JetBrains Mono', monospace;
+            padding: 0.75rem 1rem;
+            background: rgba(139, 92, 246, 0.05);
+            border-radius: 10px;
+            border: 1px solid rgba(139, 92, 246, 0.2);
+            min-height: 2.5rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .result.success {
+            color: var(--success);
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .result.error {
+            color: var(--error);
+            background: rgba(244, 63, 94, 0.1);
+            border-color: rgba(244, 63, 94, 0.3);
+        }
+
+        .result span {
+            opacity: 0.6;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .button-row button {
+            flex: 1;
+        }
+
+        .range-card .input-wrapper {
+            flex-wrap: wrap;
+        }
+
+        .range-card .input-wrapper input {
+            flex: 1 1 220px;
+        }
+
+        .range-card .button-row {
+            width: 100%;
+            margin-top: 0.75rem;
+        }
+
+        .range-card .button-row button {
+            min-width: 120px;
+        }
+
+        .range-card .result {
+            margin-top: 0.5rem;
+            white-space: pre-wrap;
+        }
+
+        footer {
+            margin-top: auto;
+            padding-top: 2rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            text-align: center;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        footer a:hover {
+            color: var(--accent-hover);
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>iptools <span style="font-weight:300; opacity:0.5">wasm</span></h1>
+            <div class="status" id="status">Initializing...</div>
+        </header>
+
+        <div class="controls">
+            <div class="toggle-group">
+                <button class="toggle-btn active" onclick="setVersion('ipv4')">IPv4</button>
+                <button class="toggle-btn" onclick="setVersion('ipv6')">IPv6</button>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- Validator -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">✓</span> Validator
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="validate-input" placeholder="IP Address">
+                    <button onclick="run('validateIP')">Check</button>
+                </div>
+                <div id="validate-result" class="result"><span>Waiting for input...</span></div>
+            </div>
+
+            <!-- CIDR Validator -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">#</span> CIDR Validator
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="cidr-validate-input" placeholder="CIDR Block">
+                    <button onclick="run('validateCIDR')">Check</button>
+                </div>
+                <div id="cidr-validate-result" class="result"><span>Waiting for input...</span></div>
+            </div>
+
+            <!-- IP <-> Long -->
+            <div class="card ipv4-only">
+                <div class="card-header">
+                    <span class="card-icon">⇄</span> IP ↔ Long
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="ip-long-input" placeholder="IP or Long">
+                    <button onclick="run('ipToLong')">Convert</button>
+                </div>
+                <div id="ip-long-result" class="result"><span>Waiting for input...</span></div>
+            </div>
+
+            <!-- IP <-> Hex -->
+            <div class="card ipv4-only">
+                <div class="card-header">
+                    <span class="card-icon">x</span> IP ↔ Hex
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="ip-hex-input" placeholder="IP or Hex">
+                    <button onclick="run('ipToHex')">Convert</button>
+                </div>
+                <div id="ip-hex-result" class="result"><span>Waiting for input...</span></div>
+            </div>
+
+            <!-- CIDR Range -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">↔</span> CIDR Range
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="cidr-range-input" placeholder="CIDR Block">
+                    <button onclick="run('cidrToRange')">Expand</button>
+                </div>
+                <div id="cidr-range-result" class="result"><span>Waiting for input...</span></div>
+            </div>
+
+            <!-- Netmask (IPv4) -->
+            <div class="card ipv4-only">
+                <div class="card-header">
+                    <span class="card-icon">/</span> Netmask ↔ Prefix
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="netmask-input" placeholder="Netmask">
+                    <button onclick="run('netmaskToPrefix')">Convert</button>
+                </div>
+                <div id="netmask-result" class="result"><span>Waiting for input...</span></div>
+            </div>
+
+            <!-- RFC1924 (IPv6) -->
+            <div class="card ipv6-only hidden">
+                <div class="card-header">
+                    <span class="card-icon">@</span> RFC1924
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="rfc1924-input" placeholder="IPv6 or Encoded">
+                    <button onclick="run('rfc1924')">Convert</button>
+                </div>
+                <div id="rfc1924-result" class="result"><span>Waiting for input...</span></div>
+            </div>
+
+            <div class="card range-card">
+                <div class="card-header">
+                    <span class="card-icon">∞</span> Range Explorer
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="range-start" placeholder="10.0.0.0/24">
+                    <input type="text" id="range-end" placeholder="Optional end address">
+                </div>
+                <div class="button-row">
+                    <button onclick="run('rangeInit')">Create Range</button>
+                    <button onclick="run('rangeNext')">Next IP</button>
+                    <button onclick="run('rangeBatch')">Next ×5</button>
+                </div>
+                <div id="range-info" class="result"><span>Define a range to see details.</span></div>
+                <div id="range-iteration" class="result"><span>Iterated addresses will appear here.</span></div>
+            </div>
+        </div>
+
+        <footer>
+            Powered by Rust & WebAssembly. <a href="https://github.com/Deniskore/iptools" target="_blank">Source
+                Code</a>
+        </footer>
+    </div>
+
+    <script type="module">
+        import init, * as wasm from './pkg/iptools.js';
+
+        let currentVersion = 'ipv4';
+        const samples = {
+            ipv4: { ip: '192.168.1.1', cidr: '10.0.0.0/24', netmask: '255.255.255.0', rangeEnd: '10.0.0.10' },
+            ipv6: { ip: '2001:db8::1', cidr: '2001:db8::/32', rangeEnd: '2001:db8::10' }
+        };
+        let rangeHandle = null;
+        let rangeIterator = null;
+
+        async function main() {
+            await init();
+            document.getElementById('status').textContent = 'Ready';
+            document.getElementById('status').style.color = 'var(--success)';
+            updatePlaceholders();
+            resetRangeState();
+        }
+
+        window.setVersion = (ver) => {
+            currentVersion = ver;
+            document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.querySelectorAll('.ipv4-only').forEach(el => el.classList.toggle('hidden', ver !== 'ipv4'));
+            document.querySelectorAll('.ipv6-only').forEach(el => el.classList.toggle('hidden', ver !== 'ipv6'));
+
+            updatePlaceholders();
+            clearResults();
+        };
+
+        function updatePlaceholders() {
+            const s = samples[currentVersion];
+            document.getElementById('validate-input').placeholder = s.ip;
+            document.getElementById('cidr-validate-input').placeholder = s.cidr;
+            document.getElementById('cidr-range-input').placeholder = s.cidr;
+            document.getElementById('range-start').placeholder = s.cidr;
+            document.getElementById('range-end').placeholder = `${s.rangeEnd} (optional)`;
+            if (currentVersion === 'ipv4') {
+                document.getElementById('ip-long-input').placeholder = s.ip;
+                document.getElementById('ip-hex-input').placeholder = s.ip;
+                document.getElementById('netmask-input').placeholder = s.netmask;
+            } else {
+                document.getElementById('rfc1924-input').placeholder = s.ip;
+            }
+        }
+
+        function clearResults() {
+            document.querySelectorAll('.result').forEach(el => {
+                if (el.id === 'range-info' || el.id === 'range-iteration') {
+                    return;
+                }
+                el.innerHTML = '<span>Waiting for input...</span>';
+                el.className = 'result';
+            });
+            resetRangeState();
+        }
+
+        function resetRangeState() {
+            rangeHandle = null;
+            rangeIterator = null;
+            const info = document.getElementById('range-info');
+            info.innerHTML = '<span>Define a range to see details.</span>';
+            info.className = 'result';
+            const iter = document.getElementById('range-iteration');
+            iter.innerHTML = '<span>Iterated addresses will appear here.</span>';
+            iter.className = 'result';
+        }
+
+        function formatRangeItem(item) {
+            const longValue = typeof item.long === 'bigint'
+                ? `${item.long.toString()}n`
+                : item.long;
+            return `${item.ip} (${longValue})`;
+        }
+
+        function setRangeOutput(id, text, isError = false) {
+            const el = document.getElementById(id);
+            el.textContent = text;
+            el.className = isError ? 'result error' : 'result success';
+        }
+
+        window.run = (action) => {
+            const output = (id, text, isError = false) => {
+                const el = document.getElementById(id);
+                el.textContent = text;
+                el.className = isError ? 'result error' : 'result success';
+            };
+
+            try {
+                switch (action) {
+                    case 'validateIP': {
+                        const val = document.getElementById('validate-input').value || samples[currentVersion].ip;
+                        const valid = currentVersion === 'ipv4' ? wasm.ipv4_validate_ip(val) : wasm.ipv6_validate_ip(val);
+                        output('validate-result', valid ? 'Valid Address' : 'Invalid Address', !valid);
+                        break;
+                    }
+                    case 'validateCIDR': {
+                        const val = document.getElementById('cidr-validate-input').value || samples[currentVersion].cidr;
+                        const valid = currentVersion === 'ipv4' ? wasm.ipv4_validate_cidr(val) : wasm.ipv6_validate_cidr(val);
+                        output('cidr-validate-result', valid ? 'Valid CIDR' : 'Invalid CIDR', !valid);
+                        break;
+                    }
+                    case 'ipToLong': {
+                        const val = document.getElementById('ip-long-input').value || samples.ipv4.ip;
+                        if (val.includes('.')) {
+                            const long = wasm.ipv4_ip2long(val);
+                            output('ip-long-result', `Long: ${long}`);
+                        } else {
+                            const ip = wasm.ipv4_long2ip(parseInt(val));
+                            output('ip-long-result', `IP: ${ip}`);
+                        }
+                        break;
+                    }
+                    case 'ipToHex': {
+                        const val = document.getElementById('ip-hex-input').value || samples.ipv4.ip;
+                        if (val.includes('.')) {
+                            const hex = wasm.ipv4_ip2hex(val);
+                            output('ip-hex-result', `Hex: ${hex}`);
+                        } else {
+                            const ip = wasm.ipv4_hex2ip(val);
+                            output('ip-hex-result', `IP: ${ip}`);
+                        }
+                        break;
+                    }
+                    case 'cidrToRange': {
+                        const val = document.getElementById('cidr-range-input').value || samples[currentVersion].cidr;
+                        const [start, end] = currentVersion === 'ipv4' ? wasm.ipv4_cidr2block(val) : wasm.ipv6_cidr2block(val);
+                        output('cidr-range-result', `${start} → ${end}`);
+                        break;
+                    }
+                    case 'netmaskToPrefix': {
+                        const val = document.getElementById('netmask-input').value || samples.ipv4.netmask;
+                        const prefix = wasm.ipv4_netmask2prefix(val);
+                        output('netmask-result', `Prefix: /${prefix}`);
+                        break;
+                    }
+                    case 'rfc1924': {
+                        const val = document.getElementById('rfc1924-input').value || samples.ipv6.ip;
+                        if (val.includes(':')) {
+                            const long = wasm.ipv6_ip2long(val);
+                            const rfc = wasm.ipv6_long2rfc1924(long);
+                            output('rfc1924-result', `Long (BigInt): ${long.toString()}n → RFC1924: ${rfc}`);
+                        } else {
+                            const long = wasm.ipv6_rfc19242long(val);
+                            const ip = wasm.ipv6_long2ip(long, false);
+                            output('rfc1924-result', `Encoded BigInt: ${long.toString()}n → IP: ${ip}`);
+                        }
+                        break;
+                    }
+                    case 'rangeInit': {
+                        const start = document.getElementById('range-start').value.trim() || samples[currentVersion].cidr;
+                        const rawEnd = document.getElementById('range-end').value.trim();
+                        const end = rawEnd.length ? rawEnd : undefined;
+                        rangeHandle = currentVersion === 'ipv4'
+                            ? new wasm.Ipv4Range(start, end)
+                            : new wasm.Ipv6Range(start, end);
+                        rangeIterator = rangeHandle.iter();
+                        const [startIp, endIp] = rangeHandle.range();
+                        const len = rangeHandle.len();
+                        const remaining = rangeHandle.remaining();
+                        const lenText = typeof len === 'bigint' ? `${len.toString()}n` : `${len}`;
+                        const remText = typeof remaining === 'bigint' ? `${remaining.toString()}n` : `${remaining}`;
+                        setRangeOutput('range-info', `${startIp} → ${endIp} (${lenText} total, ${remText} remaining)`);
+                        const iter = document.getElementById('range-iteration');
+                        iter.innerHTML = '<span>Use the iteration buttons to walk the range.</span>';
+                        iter.className = 'result';
+                        break;
+                    }
+                    case 'rangeNext': {
+                        if (!rangeIterator) {
+                            setRangeOutput('range-iteration', 'Create a range first.', true);
+                            break;
+                        }
+                        const item = rangeIterator.next();
+                        if (!item) {
+                            setRangeOutput('range-iteration', 'Range exhausted.', true);
+                        } else {
+                            setRangeOutput('range-iteration', `Next: ${formatRangeItem(item)}`);
+                        }
+                        break;
+                    }
+                    case 'rangeBatch': {
+                        if (!rangeIterator) {
+                            setRangeOutput('range-iteration', 'Create a range first.', true);
+                            break;
+                        }
+                        const items = [];
+                        for (let i = 0; i < 5; i++) {
+                            const item = rangeIterator.next();
+                            if (!item) break;
+                            items.push(formatRangeItem(item));
+                        }
+                        if (!items.length) {
+                            setRangeOutput('range-iteration', 'Range exhausted.', true);
+                        } else {
+                            setRangeOutput('range-iteration', items.join('\n'));
+                        }
+                        break;
+                    }
+                }
+            } catch (e) {
+                const id = {
+                    'validateIP': 'validate-result',
+                    'validateCIDR': 'cidr-validate-result',
+                    'ipToLong': 'ip-long-result',
+                    'ipToHex': 'ip-hex-result',
+                    'cidrToRange': 'cidr-range-result',
+                    'netmaskToPrefix': 'netmask-result',
+                    'rfc1924': 'rfc1924-result',
+                    'rangeInit': 'range-info',
+                    'rangeNext': 'range-iteration',
+                    'rangeBatch': 'range-iteration'
+                }[action];
+                output(id, `Error: ${e}`, true);
+                if (action.startsWith('range')) {
+                    resetRangeState();
+                }
+            }
+        };
+
+        main();
+    </script>
+</body>
+
+</html>

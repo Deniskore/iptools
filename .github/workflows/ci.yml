@@ -1,0 +1,31 @@
+on: [push, pull_request]
+
+name: targets-CI
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Build (std)
+      run: cargo build --verbose
+
+    - name: Run tests (std)
+      run: cargo test --verbose
+
+    - name: Build (no_std)
+      run: cargo build --no-default-features --verbose
+
+    - name: Build (WASM)
+      run: cargo build --target wasm32-unknown-unknown --verbose
