@@ -1,6 +1,6 @@
 on: [push, pull_request]
 
-name: CI
+name: checks-CI
 
 jobs:
   check:
@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.70
+      - uses: dtolnay/rust-toolchain@1.80
       - run: cargo check
 
   test:
@@ -16,16 +16,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.70
+      - uses: dtolnay/rust-toolchain@1.80
       - run: cargo test
+      - run: cargo test --features serde
 
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.70
-      - run: rustup component add rustfmt
+      - uses: dtolnay/rust-toolchain@stable
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -33,6 +33,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.70
-      - run: rustup component add clippy
+      - uses: dtolnay/rust-toolchain@stable
       - run: cargo clippy -- -D warnings

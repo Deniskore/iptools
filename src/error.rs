@@ -1,7 +1,7 @@
 use core::fmt;
-use std::fmt::Display;
+use core::fmt::Display;
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -16,6 +16,7 @@ pub enum Error {
     UnknownVersion(),
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn description(&self) -> &str {
         use self::Error::*;
@@ -35,7 +36,7 @@ impl std::error::Error for Error {
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> core::result::Result<(), fmt::Error> {
         use self::Error::*;
 
         match *self {
