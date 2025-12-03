@@ -21,6 +21,11 @@ fn test_validate_cidr() {
     assert_eq!(validate_cidr("127.0.0.0"), false);
     assert_eq!(validate_cidr(LOOPBACK), true);
     assert_eq!(validate_cidr("127.0.0.1/33"), false);
+    assert_eq!(validate_cidr(""), false);
+    assert_eq!(validate_cidr("127.0.0.1/"), false);
+    assert_eq!(validate_cidr("127.0.0.1/a"), false);
+    assert_eq!(validate_cidr("127.0.0.1/32/32"), false);
+    assert_eq!(validate_cidr(" 127.0.0.1/32"), false);
 }
 
 #[test]

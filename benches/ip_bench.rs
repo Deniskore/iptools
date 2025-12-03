@@ -229,117 +229,149 @@ fn ipnetwork_ipv4_size(bencher: Bencher) {
 }
 
 #[divan::bench(sample_count = 10000)]
-fn iptools_iprange_ipv4_iter_string_addr() -> usize {
-    IpRange::<IPv4Range>::new("10.0.0.1", "10.0.3.254")
-        .unwrap()
-        .fold(0usize, |count, ip| {
+fn iptools_iprange_ipv4_iter_string_addr(bencher: Bencher) {
+    let range = IpRange::<IPv4Range>::new("10.0.0.0/22", "").unwrap();
+    bencher.bench_local(|| {
+        let count = range.clone().fold(0usize, |count, ip| {
             black_box(ip);
             count + 1
-        })
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn iptools_iprange_ipv6_iter_string_addr() -> usize {
-    IpRange::<IPv6Range>::new("2001:db8::", "2001:db8::fff")
-        .unwrap()
-        .fold(0usize, |count, ip| {
+fn iptools_iprange_ipv6_iter_string_addr(bencher: Bencher) {
+    let range = IpRange::<IPv6Range>::new("2001:db8::", "2001:db8::fff").unwrap();
+    bencher.bench_local(|| {
+        let count = range.clone().fold(0usize, |count, ip| {
             black_box(ip);
             count + 1
-        })
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn ipnet_ipv4_iter_addr() -> usize {
+fn ipnet_ipv4_iter_addr(bencher: Bencher) {
     let net: IpNetIpv4 = "10.0.0.0/22".parse().unwrap();
-    net.hosts().fold(0usize, |count, ip| {
-        black_box(ip);
-        count + 1
-    })
+    bencher.bench_local(|| {
+        // hosts() skips network+broadcast, so two addresses are excluded
+        let count = net.hosts().fold(0usize, |count, ip| {
+            black_box(ip);
+            count + 1
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn ipnet_ipv4_iter_string_addr() -> usize {
+fn ipnet_ipv4_iter_string_addr(bencher: Bencher) {
     let net: IpNetIpv4 = "10.0.0.0/22".parse().unwrap();
-    net.hosts().fold(0usize, |count, ip| {
-        black_box(ip.to_string());
-        count + 1
-    })
+    bencher.bench_local(|| {
+        // hosts() skips network+broadcast, so two addresses are excluded
+        let count = net.hosts().fold(0usize, |count, ip| {
+            black_box(ip.to_string());
+            count + 1
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn ipnet_ipv6_iter_addr() -> usize {
+fn ipnet_ipv6_iter_addr(bencher: Bencher) {
     let net: IpNetIpv6 = "2001:db8::/116".parse().unwrap();
-    net.hosts().fold(0usize, |count, ip| {
-        black_box(ip);
-        count + 1
-    })
+    bencher.bench_local(|| {
+        let count = net.hosts().fold(0usize, |count, ip| {
+            black_box(ip);
+            count + 1
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn ipnet_ipv6_iter_string_addr() -> usize {
+fn ipnet_ipv6_iter_string_addr(bencher: Bencher) {
     let net: IpNetIpv6 = "2001:db8::/116".parse().unwrap();
-    net.hosts().fold(0usize, |count, ip| {
-        black_box(ip.to_string());
-        count + 1
-    })
+    bencher.bench_local(|| {
+        let count = net.hosts().fold(0usize, |count, ip| {
+            black_box(ip.to_string());
+            count + 1
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn ipnetwork_ipv4_iter_addr() -> usize {
+fn ipnetwork_ipv4_iter_addr(bencher: Bencher) {
     let net: IpNetworkIpv4 = "10.0.0.0/22".parse().unwrap();
-    net.iter().fold(0usize, |count, ip| {
-        black_box(ip);
-        count + 1
-    })
+    bencher.bench_local(|| {
+        let count = net.iter().fold(0usize, |count, ip| {
+            black_box(ip);
+            count + 1
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn ipnetwork_ipv4_iter_string_addr() -> usize {
+fn ipnetwork_ipv4_iter_string_addr(bencher: Bencher) {
     let net: IpNetworkIpv4 = "10.0.0.0/22".parse().unwrap();
-    net.iter().fold(0usize, |count, ip| {
-        black_box(ip.to_string());
-        count + 1
-    })
+    bencher.bench_local(|| {
+        let count = net.iter().fold(0usize, |count, ip| {
+            black_box(ip.to_string());
+            count + 1
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn ipnetwork_ipv6_iter_addr() -> usize {
+fn ipnetwork_ipv6_iter_addr(bencher: Bencher) {
     let net: IpNetworkIpv6 = "2001:db8::/116".parse().unwrap();
-    net.iter().fold(0usize, |count, ip| {
-        black_box(ip);
-        count + 1
-    })
+    bencher.bench_local(|| {
+        let count = net.iter().fold(0usize, |count, ip| {
+            black_box(ip);
+            count + 1
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn ipnetwork_ipv6_iter_string_addr() -> usize {
+fn ipnetwork_ipv6_iter_string_addr(bencher: Bencher) {
     let net: IpNetworkIpv6 = "2001:db8::/116".parse().unwrap();
-    net.iter().fold(0usize, |count, ip| {
-        black_box(ip.to_string());
-        count + 1
-    })
+    bencher.bench_local(|| {
+        let count = net.iter().fold(0usize, |count, ip| {
+            black_box(ip.to_string());
+            count + 1
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn iptools_iprange_ipv4_iter_addr() -> usize {
-    IpRange::<IPv4Range>::new("10.0.0.1", "10.0.3.254")
-        .unwrap()
-        .addrs()
-        .fold(0usize, |count, addr| {
+fn iptools_iprange_ipv4_iter_addr(bencher: Bencher) {
+    let range = IpRange::<IPv4Range>::new("10.0.0.0/22", "").unwrap();
+    bencher.bench_local(|| {
+        let count = range.addrs().fold(0usize, |count, addr| {
             black_box(addr);
             count + 1
-        })
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 10000)]
-fn iptools_iprange_ipv6_iter_addr() -> usize {
-    IpRange::<IPv6Range>::new("2001:db8::", "2001:db8::fff")
-        .unwrap()
-        .addrs()
-        .fold(0usize, |count, addr| {
+fn iptools_iprange_ipv6_iter_addr(bencher: Bencher) {
+    let range = IpRange::<IPv6Range>::new("2001:db8::", "2001:db8::fff").unwrap();
+    bencher.bench_local(|| {
+        let count = range.addrs().fold(0usize, |count, addr| {
             black_box(addr);
             count + 1
-        })
+        });
+        black_box(count);
+    });
 }
 
 #[divan::bench(sample_count = 100000)]

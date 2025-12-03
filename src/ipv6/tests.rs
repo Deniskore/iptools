@@ -13,11 +13,13 @@ fn test_validate_ip() {
         "2001:db8::192.168.0.1",
         "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
         "::ffff:192.0.2.128",
+        "::ffff:0.0.0.0",
+        "::ffff:255.255.255.255",
         "1080:0:0:0:8:800:200c:417a",
     ] {
         assert!(validate_ip(good), "{good} rejected unexpectedly");
     }
-    for bad in ["::ff::ff", "::fffff", "::ffff:192.0.2.300"] {
+    for bad in ["::ff::ff", "::fffff", "::ffff:192.0.2.300", ":", "1:::1"] {
         assert!(!validate_ip(bad), "{bad} accepted unexpectedly");
     }
 }
@@ -69,6 +71,52 @@ fn test_rfc19242long() {
     );
     assert_eq!(rfc19242long("pizza"), None);
     assert_eq!(rfc19242long("=r54lj&NUUO~Hi%c2ym0"), Some(MAX_IP));
+    assert_eq!(
+        rfc19242long("4)+k&C#VzJ4br>0wv%Yp"),
+        Some(ip2long("1080::8:800:200C:417A").unwrap())
+    );
+    assert_eq!(
+        rfc19242long("00000000000000000000"),
+        Some(ip2long("::").unwrap())
+    );
+    assert_eq!(
+        rfc19242long("=r54lj&NUUO~Hi%c2ym0"),
+        Some(ip2long("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff").unwrap())
+    );
+
+    // Overflow and invalid chars are rejected
+    assert!(rfc19242long("~~~~~~~~~~~~~~~~~~~~").is_none());
+    assert!(rfc19242long("0000000000000000000\u{80}").is_none());
+}
+
+#[test]
+fn test_rfc1924_roundtrip_sampled() {
+    let cases: &[u128] = &[
+        0,
+        1,
+        85,
+        256,
+        42_424,
+        1_234_567_890,
+        0x20010db8000000000000000000001234,
+        MAX_IP,
+    ];
+
+    for &value in cases {
+        let encoded = long2rfc1924(value);
+        let decoded = rfc19242long(&encoded);
+        assert_eq!(
+            decoded,
+            Some(value),
+            "roundtrip failed for {value} -> {encoded}"
+        );
+        assert_eq!(encoded.len(), 20, "encoding length changed for {value}");
+    }
+
+    // Invalid length and charset coverage
+    assert!(rfc19242long("short").is_none());
+    assert!(rfc19242long("!!!!!!!!!!!!!!!!!!!!!").is_none()); // 21 chars
+    assert!(rfc19242long("0000000000000000000/").is_none()); // bad character
 }
 
 #[test]
@@ -98,6 +146,14 @@ fn test_validate_cidr() {
     }
     assert!(!validate_cidr("::"));
     assert!(!validate_cidr("::/129"));
+    assert!(validate_cidr("::/00")); // leading zeros are tolerated but mean the same value
+    assert!(validate_cidr("::/001"));
+    assert!(!validate_cidr("::/-1"));
+    assert!(!validate_cidr(""));
+    assert!(!validate_cidr("::/"));
+    assert!(!validate_cidr("::/a"));
+    assert!(!validate_cidr("::/128/128"));
+    assert!(!validate_cidr(" ::/128"));
 }
 
 #[test]

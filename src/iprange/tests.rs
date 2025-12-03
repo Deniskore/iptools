@@ -142,6 +142,70 @@ fn test_contains_std_helpers() {
     assert!(!ipv6_range.contains_ipaddr(IpAddr::V4(Ipv4Addr::LOCALHOST)));
 }
 
+#[test]
+fn test_addrs_iterator_ipv4() {
+    let range = IpRange::<IPv4>::new("10.0.0.1", "10.0.0.3").unwrap();
+    let mut iter = range.addrs();
+    assert_eq!(iter.size_hint(), (3, Some(3)));
+    let collected = iter.by_ref().collect::<Vec<_>>();
+    assert_eq!(
+        collected,
+        [
+            ipv4::ip2long("10.0.0.1").unwrap(),
+            ipv4::ip2long("10.0.0.2").unwrap(),
+            ipv4::ip2long("10.0.0.3").unwrap()
+        ]
+    );
+
+    // FusedIterator behavior: once exhausted, it stays exhausted
+    assert_eq!(iter.next(), None);
+    assert_eq!(iter.next(), None);
+
+    // addrs() should not advance the main iterator state
+    let mut range_again = range;
+    let _ = range_again.addrs().collect::<Vec<_>>();
+    assert_eq!(range_again.next().unwrap(), "10.0.0.1");
+}
+
+#[test]
+fn test_addrs_iterator_ipv6_and_range_consistency() {
+    let range = IpRange::<IPv6>::new("2001:db8::", "2001:db8::3").unwrap();
+    let addrs = range.addrs().collect::<Vec<_>>();
+    assert_eq!(addrs.len(), 4);
+    assert_eq!(range.len(), 4);
+    assert_eq!(
+        range.get_range(),
+        ("2001:db8::".to_string(), "2001:db8::3".to_string())
+    );
+    assert_eq!(ipv6::long2ip(addrs[0], false), "2001:db8::");
+    assert_eq!(ipv6::long2ip(*addrs.last().unwrap(), false), "2001:db8::3");
+}
+
+#[test]
+fn test_iterator_size_hint_and_remaining_updates() {
+    let mut range = IpRange::<IPv4>::new("10.0.0.1", "10.0.0.2").unwrap();
+    assert_eq!(Iterator::size_hint(&range), (2, Some(2)));
+    assert_eq!(range.remaining(), 2);
+
+    range.next();
+    assert_eq!(Iterator::size_hint(&range), (1, Some(1)));
+    assert_eq!(range.remaining(), 1);
+
+    range.next();
+    assert_eq!(Iterator::size_hint(&range), (0, Some(0)));
+    assert_eq!(range.remaining(), 0);
+    assert_eq!(range.next(), None);
+    assert_eq!(range.next(), None); // fused behavior for IpRange iterator
+}
+
+#[test]
+fn test_is_empty_and_reversed_bounds_error() {
+    let range = IpRange::<IPv4>::new("10.0.0.1", "10.0.0.1").unwrap();
+    assert!(!range.is_empty());
+    assert!(IpRange::<IPv4>::new("10.0.0.2", "10.0.0.1").is_err());
+    assert!(IpRange::<IPv6>::new("2001:db8::2", "2001:db8::1").is_err());
+}
+
 #[cfg(feature = "serde")]
 #[test]
 fn test_serde_roundtrip_ipv4_range() {
