@@ -22,14 +22,14 @@ This is a port of package [iptools](https://github.com/bd808/python-iptools) fro
 Add the following dependency to your Cargo manifest:
 ```toml
 [dependencies]
-iptools = "0.4.0"
+iptools = "0.4.1"
 ```
 
 ### `no_std` support
 To use `iptools` in a `no_std` environment, disable the default features:
 ```toml
 [dependencies]
-iptools = { version = "0.4.0", default-features = false }
+iptools = { version = "0.4.1", default-features = false }
 ```
 
 ## Example of usage
@@ -89,6 +89,9 @@ difference locally:
 ```bash
 python3 -c "from iptools import ipv6; print(ipv6.validate_ip(':::1'))"
 ```
+
+### Reversed range bounds difference
+The Rust port rejects reversed bounds when constructing ranges (e.g. `"10.0.0.2"`, `"10.0.0.1"` returns an error). Python `iptools` normalizes and silently swaps those endpoints.
 
 ## Supported Rust Versions
 Rust 1.78.0+

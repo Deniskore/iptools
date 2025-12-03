@@ -14,12 +14,10 @@ static HEX_RE: &lazy_regex::Lazy<lazy_regex::Regex> =
 static DOTTED_QUAD_RE: &lazy_regex::Lazy<lazy_regex::Regex> =
     regex!(r"^([0-9a-f]{0,4}:){2,6}(\d{1,3}\.){0,3}\d{1,3}$");
 
-// Regex for validating an IPv6 in hex notation
+// Kept for compatibility with earlier public API
+#[allow(dead_code)]
 static RE_RFC1924: &lazy_regex::Lazy<lazy_regex::Regex> =
     regex!(r"^[0-9A-Za-z!#$%&()*+-;<=>?@^_`{|}~]{20}$");
-
-// RFC 1924 reverse lookup
-const _RFC1924_REV: bool = true;
 
 /// Last ip
 pub const MAX_IP: u128 = u128::MAX;
@@ -117,34 +115,23 @@ pub const MULTICAST_LOCAL_DHCP: &str = "ff02::1:2";
 /// All DHCP servers and relay agents on the local site
 pub const MULTICAST_SITE_DHCP: &str = "ff05::1:3";
 
-// RFC 1924 alphabet
-const _RFC1924_ALPHABET: &[char] = &[
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
-    'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b',
-    'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u',
-    'v', 'w', 'x', 'y', 'z', '!', '#', '$', '%', '&', '(', ')', '*', '+', '-', ';', '<', '=', '>',
-    '?', '@', '^', '_', '`', '{', '|', '}', '~',
-];
+const RFC1924_ALPHABET_BYTES: &[u8; 85] =
+    b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
 
-static RFC1924_REV_TABLE: Lazy<[i8; 128]> = Lazy::new(|| {
+const fn build_rfc1924_rev_table() -> [i8; 128] {
     let mut table = [-1i8; 128];
-    for (i, &c) in _RFC1924_ALPHABET.iter().enumerate() {
-        if (c as usize) < 128 {
-            table[c as usize] = i as i8;
+    let mut i = 0;
+    while i < RFC1924_ALPHABET_BYTES.len() {
+        let byte = RFC1924_ALPHABET_BYTES[i] as usize;
+        if byte < 128 {
+            table[byte] = i as i8;
         }
+        i += 1;
     }
     table
-});
-
-fn rfc1924_rev_lookup(c: char) -> Option<i32> {
-    if (c as u32) < 128 {
-        let val = RFC1924_REV_TABLE[c as usize];
-        if val >= 0 {
-            return Some(val as i32);
-        }
-    }
-    None
 }
+
+const RFC1924_REV_TABLE: [i8; 128] = build_rfc1924_rev_table();
 
 /// Validate a hexidecimal IPV6 ip address using regex
 ///
@@ -440,9 +427,7 @@ pub fn long2ip(long_ip: u128, rfc1924: bool) -> alloc::string::String {
         }
     };
 
-    // Use byte buffer for zero-allocation string building
-    let mut buf = [0u8; 39];
-    let mut pos = 0;
+    let mut buf = alloc::vec::Vec::with_capacity(39);
 
     const HEX: &[u8; 16] = b"0123456789abcdef";
 
@@ -450,46 +435,42 @@ pub fn long2ip(long_ip: u128, rfc1924: bool) -> alloc::string::String {
     while i < 8 {
         // Handle compression
         if i == best_start {
-            buf[pos..pos + 2].copy_from_slice(b"::");
-            pos += 2;
+            buf.extend_from_slice(b"::");
             i = best_start + best_len;
             continue;
         }
 
         // Add separator
-        if pos > 0 && buf[pos - 1] != b':' {
-            buf[pos] = b':';
-            pos += 1;
+        if let Some(&last) = buf.last() {
+            if last != b':' {
+                buf.push(b':');
+            }
         }
 
         // Format hextet - optimized to avoid leading zeros
         let val = hextets[i];
 
         if val >= 0x1000 {
-            buf[pos] = HEX[(val >> 12) as usize];
-            buf[pos + 1] = HEX[((val >> 8) & 0xF) as usize];
-            buf[pos + 2] = HEX[((val >> 4) & 0xF) as usize];
-            buf[pos + 3] = HEX[(val & 0xF) as usize];
-            pos += 4;
+            buf.push(HEX[(val >> 12) as usize]);
+            buf.push(HEX[((val >> 8) & 0xF) as usize]);
+            buf.push(HEX[((val >> 4) & 0xF) as usize]);
+            buf.push(HEX[(val & 0xF) as usize]);
         } else if val >= 0x100 {
-            buf[pos] = HEX[((val >> 8) & 0xF) as usize];
-            buf[pos + 1] = HEX[((val >> 4) & 0xF) as usize];
-            buf[pos + 2] = HEX[(val & 0xF) as usize];
-            pos += 3;
+            buf.push(HEX[((val >> 8) & 0xF) as usize]);
+            buf.push(HEX[((val >> 4) & 0xF) as usize]);
+            buf.push(HEX[(val & 0xF) as usize]);
         } else if val >= 0x10 {
-            buf[pos] = HEX[((val >> 4) & 0xF) as usize];
-            buf[pos + 1] = HEX[(val & 0xF) as usize];
-            pos += 2;
+            buf.push(HEX[((val >> 4) & 0xF) as usize]);
+            buf.push(HEX[(val & 0xF) as usize]);
         } else {
-            buf[pos] = HEX[val as usize];
-            pos += 1;
+            buf.push(HEX[val as usize]);
         }
 
         i += 1;
     }
 
     // Safe: buf contains only ASCII hex digits and colons, so this can never fail
-    alloc::string::String::from_utf8(buf[..pos].to_vec()).unwrap()
+    alloc::string::String::from_utf8(buf).unwrap()
 }
 
 /// Convert a network byte order 128 bit integer to an rfc1924 IPV6 address
@@ -503,15 +484,19 @@ pub fn long2ip(long_ip: u128, rfc1924: bool) -> alloc::string::String {
 /// assert_eq!(long2rfc1924(ip2long("::").unwrap()), "00000000000000000000");
 /// ```
 pub fn long2rfc1924(long_ip: u128) -> alloc::string::String {
-    let mut o: ArrayVec<[char; 20]> = ArrayVec::new();
-    let mut r = long_ip;
-    while r > 85 {
-        o.push(_RFC1924_ALPHABET[(r % 85) as usize]);
-        r /= 85;
+    let mut buf = [b'0'; 20];
+    let mut idx = 20;
+    let mut value = long_ip;
+
+    // Fill from the end to avoid reversing
+    while value > 0 {
+        let digit = (value % 85) as usize;
+        value /= 85;
+        idx -= 1;
+        buf[idx] = RFC1924_ALPHABET_BYTES[digit];
     }
-    o.push(_RFC1924_ALPHABET[r as usize]);
-    o.reverse();
-    alloc::format!("{:0>20}", o.into_iter().collect::<alloc::string::String>())
+
+    alloc::string::String::from_utf8(buf.to_vec()).expect("alphabet is valid ASCII")
 }
 
 /// Convert an RFC1924 IPV6 address to a network byte order 128 bit integer
@@ -525,19 +510,22 @@ pub fn long2rfc1924(long_ip: u128) -> alloc::string::String {
 /// assert_eq!(rfc19242long("pizza"), None);
 /// ```
 pub fn rfc19242long(s: &str) -> Option<u128> {
-    if !RE_RFC1924.is_match(s) {
+    if s.len() != 20 {
         return None;
     }
-    let mut x = 0u128;
-    for c in s.chars() {
-        if let Some(mul_result) = x.checked_mul(85) {
-            let val = rfc1924_rev_lookup(c)?;
-            x = mul_result + val as u128;
-        } else {
+
+    let mut acc = 0u128;
+    for b in s.bytes() {
+        if b >= 128 {
             return None;
         }
+        let val = RFC1924_REV_TABLE[b as usize];
+        if val < 0 {
+            return None;
+        }
+        acc = acc.checked_mul(85)?.checked_add(val as u128)?;
     }
-    Some(x)
+    Some(acc)
 }
 
 /// Validate a CIDR notation ip address using regex
@@ -596,30 +584,37 @@ pub fn validate_cidr_re(cidr: &str) -> bool {
 /// assert_eq!(validate_cidr("::/129"), false);
 /// ```
 pub fn validate_cidr(cidr: &str) -> bool {
+    let bytes = cidr.as_bytes();
+    let len = bytes.len();
+
     // Find the '/' separator
-    let Some(slash_pos) = cidr.bytes().position(|b| b == b'/') else {
+    let Some(slash_pos) = bytes.iter().position(|&b| b == b'/') else {
         return false;
     };
 
     let ip_part = &cidr[..slash_pos];
-    let mask_bytes = &cidr.as_bytes()[slash_pos + 1..];
 
     // Early validation: mask must be 1-3 digits
-    if mask_bytes.is_empty() || mask_bytes.len() > 3 {
+    let mask_start = slash_pos + 1;
+    let mask_len = len.saturating_sub(mask_start);
+    if mask_len == 0 || mask_len > 3 {
         return false;
     }
 
     // Parse prefix manually (faster than parse::<u128>())
     let mut prefix: u16 = 0;
-    for &b in mask_bytes {
+    for &b in &bytes[mask_start..] {
         if !b.is_ascii_digit() {
             return false;
         }
         prefix = prefix * 10 + (b - b'0') as u16;
+        if prefix > 128 {
+            return false;
+        }
     }
 
-    // Validate prefix range (0-128) and IP (using ip2long for fast validation)
-    prefix <= 128 && ip2long(ip_part).is_ok()
+    // Validate IP (using ip2long for fast validation)
+    ip2long(ip_part).is_ok()
 }
 
 /// Convert a CIDR notation ip address into a tuple containing the network block start and end addresses

@@ -1,6 +1,6 @@
 [package]
 name = "iptools"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Denis Avvakumov"]
 license = "MIT"
 readme = "README.md"
@@ -25,12 +25,14 @@ serde = ["dep:serde"]
 lazy-regex = "3.4.2"
 once_cell = { version = "1.21", default-features = false, features = ["alloc"] }
 tinyvec = { version = "1", features = ["alloc"] }
-itoa = { version = "1", default-features = false }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+serde = { version = "1", default-features = false, features = [
+    "derive",
+    "alloc",
+], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-js-sys = "0.3"
+wasm-bindgen = "0.2.106"
+js-sys = "0.3.83"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

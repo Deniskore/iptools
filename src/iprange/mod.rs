@@ -4,6 +4,7 @@ use crate::error::{Error, Result};
 use crate::ipv4;
 use crate::ipv6;
 use core::hash::{Hash, Hasher};
+use core::iter::FusedIterator;
 use core::marker::PhantomData;
 use once_cell::sync::Lazy;
 #[cfg(feature = "serde")]
@@ -54,7 +55,8 @@ struct RangeState<T> {
     start_ip: T,
     end_ip: T,
     len: T,
-    last_ip: Option<T>,
+    next_ip: T,
+    remaining: T,
 }
 
 /// A generic IP address range.
@@ -204,6 +206,9 @@ impl<T: RangeFamily> IpRange<T> {
     /// masks from the second argument. If you have an address plus mask, convert it to CIDR or to
     /// the corresponding final IP before calling [`IpRange::new`].
     ///
+    /// Note: Unlike the Python `iptools` library, reversed bounds are rejected
+    /// rather than normalized.
+    ///
     /// # Examples
     ///
     /// ```
@@ -226,17 +231,21 @@ impl<T: RangeFamily> IpRange<T> {
         let start_ip = parse_endpoint::<T>(start, true)?;
         let end_ip = parse_endpoint::<T>(end_spec, false)?;
 
+        // Unlike Python iptools, reversed bounds are rejected.
         if start_ip > end_ip {
             return Err(Error::V4Subnet());
         }
-
         let len = T::len(start_ip, end_ip);
+        if len == T::zero() && start_ip != end_ip {
+            return Err(Error::V4Subnet());
+        }
         Ok(IpRange {
             ip_range: RangeState {
                 start_ip,
                 end_ip,
                 len,
-                last_ip: None,
+                next_ip: start_ip,
+                remaining: len,
             },
             _marker: PhantomData,
         })
@@ -321,22 +330,7 @@ impl<T: RangeFamily> IpRange<T> {
     /// # }
     /// ```
     pub fn remaining(&self) -> T::Addr {
-        if let Some(last) = self.ip_range.last_ip {
-            T::remaining(self.ip_range.end_ip, last)
-        } else {
-            self.ip_range.len
-        }
-    }
-
-    #[inline]
-    fn bounds_contain(&self, target_start: T::Addr, target_end: T::Addr, is_range: bool) -> bool {
-        if is_range {
-            self.ip_range.start_ip <= target_start
-                && target_start <= self.ip_range.end_ip
-                && target_end <= self.ip_range.end_ip
-        } else {
-            self.ip_range.start_ip <= target_start && target_start <= self.ip_range.end_ip
-        }
+        self.ip_range.remaining
     }
 
     #[inline]
@@ -402,8 +396,8 @@ impl<T: RangeFamily> IpRange<T> {
     /// bounds. `"10.0.0.1", "255.255.255.0"` spans the numeric space between those
     /// literal addresses, not the `/24` network the mask implies. When you obtain
     /// "IP + netmask" pairs, turn the mask into a prefix (e.g., via
-    /// [`ipv4::netmask2prefix`](crate::ipv4::netmask2prefix)) and build the range
-    /// from CIDR or by computing the actual closing IP before calling `contains`.
+    /// [`ipv4::netmask2prefix`]) and build the range from CIDR or by computing the
+    /// actual closing IP before calling `contains`.
     ///
     /// # Examples
     ///
@@ -452,16 +446,18 @@ impl<T: RangeFamily> IpRange<T> {
     }
 
     /// Checks whether a numeric address sits inside this range.
+    #[inline(always)]
     pub fn contains_addr(&self, addr: T::Addr) -> bool {
-        self.bounds_contain(addr, addr, false)
+        self.ip_range.start_ip <= addr && addr <= self.ip_range.end_ip
     }
 
     /// Checks whether the inclusive numeric bounds sit inside this range.
+    #[inline(always)]
     pub fn contains_range(&self, start: T::Addr, end: T::Addr) -> bool {
         if start > end {
             return false;
         }
-        self.bounds_contain(start, end, start != end)
+        self.ip_range.start_ip <= start && end <= self.ip_range.end_ip
     }
 
     /// Checks if an IP address or range falls within reserved IP blocks (e.g., loopback, private).
@@ -489,45 +485,40 @@ impl<T: RangeFamily> IpRange<T> {
 
 /// Iterator over raw IP addresses.
 pub struct AddrIterator<T: RangeFamily> {
-    ip_range: RangeState<T::Addr>,
+    next: Option<T::Addr>,
+    end: T::Addr,
     _marker: PhantomData<T>,
 }
 
 impl<T: RangeFamily> Iterator for AddrIterator<T> {
     type Item = T::Addr;
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        match self.ip_range.last_ip {
-            None => {
-                self.ip_range.last_ip = Some(self.ip_range.start_ip);
-                Some(self.ip_range.start_ip)
-            }
-            Some(current) => {
-                if current >= self.ip_range.end_ip {
-                    None
-                } else {
-                    let next = T::wrapping_add_one(current);
-                    self.ip_range.last_ip = Some(next);
-                    Some(next)
-                }
-            }
-        }
+        let current = self.next?;
+        self.next = if current == self.end {
+            None
+        } else {
+            Some(T::wrapping_add_one(current))
+        };
+        Some(current)
     }
 
+    #[inline(always)]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        match self.ip_range.last_ip {
-            None => T::size_hint(self.ip_range.len),
+        match self.next {
+            None => (0, Some(0)),
             Some(current) => {
-                if current >= self.ip_range.end_ip {
-                    (0, Some(0))
-                } else {
-                    let remaining = T::remaining(self.ip_range.end_ip, current);
-                    T::size_hint(remaining)
-                }
+                let remaining = T::remaining(self.end, current);
+                let inclusive = T::checked_add_one(remaining).unwrap_or(remaining);
+                T::size_hint(inclusive)
             }
         }
     }
 }
+
+impl<T: RangeFamily> FusedIterator for AddrIterator<T> {}
+impl ExactSizeIterator for AddrIterator<IPv4> {}
 
 impl<T: RangeFamily> IpRange<T> {
     /// Returns an iterator over raw IP addresses.
@@ -545,7 +536,8 @@ impl<T: RangeFamily> IpRange<T> {
     /// ```
     pub fn addrs(&self) -> AddrIterator<T> {
         AddrIterator {
-            ip_range: self.ip_range.clone(),
+            next: Some(self.ip_range.start_ip),
+            end: self.ip_range.end_ip,
             _marker: PhantomData,
         }
     }
@@ -554,38 +546,25 @@ impl<T: RangeFamily> IpRange<T> {
 impl<T: RangeFamily> Iterator for IpRange<T> {
     type Item = alloc::string::String;
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        match self.ip_range.last_ip {
-            None => {
-                self.ip_range.last_ip = Some(self.ip_range.start_ip);
-                Some(T::format_addr(self.ip_range.start_ip))
-            }
-            Some(current) => {
-                if current >= self.ip_range.end_ip {
-                    None
-                } else {
-                    let next = T::wrapping_add_one(current);
-                    self.ip_range.last_ip = Some(next);
-                    Some(T::format_addr(next))
-                }
-            }
+        if self.ip_range.remaining == T::zero() {
+            return None;
         }
+
+        let out = self.ip_range.next_ip;
+        self.ip_range.next_ip = T::wrapping_add_one(out);
+        self.ip_range.remaining = T::checked_sub_one(self.ip_range.remaining);
+        Some(T::format_addr(out))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        match self.ip_range.last_ip {
-            None => T::size_hint(self.ip_range.len),
-            Some(current) => {
-                if current >= self.ip_range.end_ip {
-                    (0, Some(0))
-                } else {
-                    let remaining = T::remaining(self.ip_range.end_ip, current);
-                    T::size_hint(remaining)
-                }
-            }
-        }
+        T::size_hint(self.ip_range.remaining)
     }
 }
+
+impl<T: RangeFamily> FusedIterator for IpRange<T> {}
+impl ExactSizeIterator for IpRange<IPv4> {}
 
 impl<T: RangeFamily> PartialEq for IpRange<T> {
     fn eq(&self, other: &Self) -> bool {
@@ -646,7 +625,7 @@ impl RangeFamily for IPv4 {
     }
 
     fn checked_sub_one(value: Self::Addr) -> Self::Addr {
-        value.checked_sub(1).unwrap_or(value)
+        value.saturating_sub(1)
     }
 
     fn len(start: Self::Addr, end: Self::Addr) -> Self::Addr {
@@ -714,7 +693,7 @@ impl RangeFamily for IPv6 {
     }
 
     fn checked_sub_one(value: Self::Addr) -> Self::Addr {
-        value.checked_sub(1).unwrap_or(value)
+        value.saturating_sub(1)
     }
 
     fn len(start: Self::Addr, end: Self::Addr) -> Self::Addr {
