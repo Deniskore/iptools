@@ -24,8 +24,11 @@ jobs:
     - name: Run tests (std)
       run: cargo test --verbose
 
-    - name: Build (no_std)
-      run: cargo build --no-default-features --verbose
+    - name: Check (no_std host)
+      run: cargo check --no-default-features --verbose
+
+    - name: Check (no_std wasm)
+      run: cargo check --no-default-features --target wasm32-unknown-unknown --verbose
 
     - name: Build (WASM)
-      run: cargo build --target wasm32-unknown-unknown --verbose
+      run: cargo build -p iptools-wasm --target wasm32-unknown-unknown --verbose

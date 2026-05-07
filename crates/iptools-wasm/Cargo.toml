@@ -1,0 +1,25 @@
+[package]
+name = "iptools-wasm"
+version = "0.5.0"
+authors = ["Denis Avvakumov"]
+license = "MIT"
+repository = "https://github.com/Deniskore/iptools"
+homepage = "https://github.com/Deniskore"
+description = "WebAssembly bindings for iptools"
+keywords = ["ip", "iptools", "network", "wasm"]
+categories = ["algorithms", "network-programming", "wasm"]
+edition = "2024"
+rust-version = "1.85.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["std"]
+std = ["iptools/std"]
+
+[dependencies]
+iptools = { path = "../..", default-features = false }
+js-sys = "0.3.97"
+wasm-bindgen = "0.2.120"

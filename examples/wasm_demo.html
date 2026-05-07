@@ -202,6 +202,18 @@
             transform: translateY(0);
         }
 
+        button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        button:disabled:hover {
+            transform: none;
+            box-shadow: none;
+        }
+
         .result {
             font-family: 'JetBrains Mono', monospace;
             padding: 0.75rem 1rem;
@@ -300,8 +312,8 @@
 
         <div class="controls">
             <div class="toggle-group">
-                <button class="toggle-btn active" onclick="setVersion('ipv4')">IPv4</button>
-                <button class="toggle-btn" onclick="setVersion('ipv6')">IPv6</button>
+                <button class="toggle-btn active" onclick="setVersion('ipv4', this)">IPv4</button>
+                <button class="toggle-btn" onclick="setVersion('ipv6', this)">IPv6</button>
             </div>
         </div>
 
@@ -418,6 +430,7 @@
         import init, * as wasm from './pkg/iptools.js';
 
         let currentVersion = 'ipv4';
+        let wasmReady = false;
         const samples = {
             ipv4: { ip: '192.168.1.1', cidr: '10.0.0.0/24', netmask: '255.255.255.0', rangeEnd: '10.0.0.10' },
             ipv6: { ip: '2001:db8::1', cidr: '2001:db8::/32', rangeEnd: '2001:db8::10' }
@@ -425,18 +438,66 @@
         let rangeHandle = null;
         let rangeIterator = null;
 
-        async function main() {
-            await init();
-            document.getElementById('status').textContent = 'Ready';
-            document.getElementById('status').style.color = 'var(--success)';
-            updatePlaceholders();
-            resetRangeState();
+        const resultIdByAction = {
+            validateIP: 'validate-result',
+            validateCIDR: 'cidr-validate-result',
+            ipToLong: 'ip-long-result',
+            ipToHex: 'ip-hex-result',
+            cidrToRange: 'cidr-range-result',
+            netmaskToPrefix: 'netmask-result',
+            rfc1924: 'rfc1924-result',
+            rangeInit: 'range-info',
+            rangeNext: 'range-iteration',
+            rangeBatch: 'range-iteration'
+        };
+
+        function setActionButtonsEnabled(enabled) {
+            document.querySelectorAll('.card button').forEach(btn => {
+                btn.disabled = !enabled;
+            });
         }
 
-        window.setVersion = (ver) => {
+        function safeFree(handle) {
+            if (handle && typeof handle.free === 'function') {
+                handle.free();
+            }
+        }
+
+        function releaseRangeHandles() {
+            if (rangeIterator) {
+                safeFree(rangeIterator);
+                rangeIterator = null;
+            }
+            if (rangeHandle) {
+                safeFree(rangeHandle);
+                rangeHandle = null;
+            }
+        }
+
+        async function main() {
+            const status = document.getElementById('status');
+            setActionButtonsEnabled(false);
+            try {
+                await init();
+                wasmReady = true;
+                setActionButtonsEnabled(true);
+                status.textContent = 'Ready';
+                status.style.color = 'var(--success)';
+                updatePlaceholders();
+                resetRangeState();
+            } catch (err) {
+                console.error(err);
+                status.textContent = 'Init failed';
+                status.style.color = 'var(--error)';
+            }
+        }
+
+        window.setVersion = (ver, sourceBtn) => {
             currentVersion = ver;
             document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
+            if (sourceBtn) {
+                sourceBtn.classList.add('active');
+            }
 
             document.querySelectorAll('.ipv4-only').forEach(el => el.classList.toggle('hidden', ver !== 'ipv4'));
             document.querySelectorAll('.ipv6-only').forEach(el => el.classList.toggle('hidden', ver !== 'ipv6'));
@@ -473,8 +534,7 @@
         }
 
         function resetRangeState() {
-            rangeHandle = null;
-            rangeIterator = null;
+            releaseRangeHandles();
             const info = document.getElementById('range-info');
             info.innerHTML = '<span>Define a range to see details.</span>';
             info.className = 'result';
@@ -502,6 +562,14 @@
                 el.textContent = text;
                 el.className = isError ? 'result error' : 'result success';
             };
+
+            if (!wasmReady) {
+                const id = resultIdByAction[action];
+                if (id) {
+                    output(id, 'WASM is still initializing...', true);
+                }
+                return;
+            }
 
             try {
                 switch (action) {
@@ -546,7 +614,11 @@
                         break;
                     }
                     case 'netmaskToPrefix': {
-                        const val = document.getElementById('netmask-input').value || samples.ipv4.netmask;
+                        const val = document.getElementById('netmask-input').value.trim() || samples.ipv4.netmask;
+                        if (!wasm.ipv4_validate_netmask(val)) {
+                            output('netmask-result', 'Invalid netmask', true);
+                            break;
+                        }
                         const prefix = wasm.ipv4_netmask2prefix(val);
                         output('netmask-result', `Prefix: /${prefix}`);
                         break;
@@ -568,6 +640,7 @@
                         const start = document.getElementById('range-start').value.trim() || samples[currentVersion].cidr;
                         const rawEnd = document.getElementById('range-end').value.trim();
                         const end = rawEnd.length ? rawEnd : undefined;
+                        releaseRangeHandles();
                         rangeHandle = currentVersion === 'ipv4'
                             ? new wasm.Ipv4Range(start, end)
                             : new wasm.Ipv6Range(start, end);
@@ -590,6 +663,8 @@
                         }
                         const item = rangeIterator.next();
                         if (!item) {
+                            safeFree(rangeIterator);
+                            rangeIterator = null;
                             setRangeOutput('range-iteration', 'Range exhausted.', true);
                         } else {
                             setRangeOutput('range-iteration', `Next: ${formatRangeItem(item)}`);
@@ -604,7 +679,11 @@
                         const items = [];
                         for (let i = 0; i < 5; i++) {
                             const item = rangeIterator.next();
-                            if (!item) break;
+                            if (!item) {
+                                safeFree(rangeIterator);
+                                rangeIterator = null;
+                                break;
+                            }
                             items.push(formatRangeItem(item));
                         }
                         if (!items.length) {
@@ -616,24 +695,15 @@
                     }
                 }
             } catch (e) {
-                const id = {
-                    'validateIP': 'validate-result',
-                    'validateCIDR': 'cidr-validate-result',
-                    'ipToLong': 'ip-long-result',
-                    'ipToHex': 'ip-hex-result',
-                    'cidrToRange': 'cidr-range-result',
-                    'netmaskToPrefix': 'netmask-result',
-                    'rfc1924': 'rfc1924-result',
-                    'rangeInit': 'range-info',
-                    'rangeNext': 'range-iteration',
-                    'rangeBatch': 'range-iteration'
-                }[action];
+                const id = resultIdByAction[action];
                 output(id, `Error: ${e}`, true);
                 if (action.startsWith('range')) {
                     resetRangeState();
                 }
             }
         };
+
+        window.addEventListener('beforeunload', releaseRangeHandles);
 
         main();
     </script>

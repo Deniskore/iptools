@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.80
+      - uses: dtolnay/rust-toolchain@1.85.0
       - run: cargo check
 
   test:
@@ -16,8 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.80
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: wasm32-unknown-unknown
       - run: cargo test
+      - run: cargo check --no-default-features
+      - run: cargo check --no-default-features --target wasm32-unknown-unknown
+      - run: cargo check -p iptools-wasm --target wasm32-unknown-unknown
       - run: cargo test --features serde
       - run: cargo test --doc
 

@@ -1,36 +1,36 @@
 // Copyright (c) 2025 Denis Avvakumov
 // Licensed under the MIT license,  https://opensource.org/licenses/MIT
 
+use core::fmt;
+#[cfg(feature = "std")]
 use lazy_regex::regex;
-use once_cell::sync::Lazy;
 
 use crate::error::Error;
 use crate::error::Result;
 
-static IPV4_RE: &lazy_regex::Lazy<lazy_regex::Regex> = regex!(r"^(\d{1,3}\.){0,3}\d{1,3}$");
+#[cfg(feature = "std")]
+static IPV4_RE: &lazy_regex::Lazy<lazy_regex::Regex> = regex!(r"^(\d{1,3}\.){3}\d{1,3}$");
 
 /// IETF and IANA reserved ip addresses
-pub static RESERVED_RANGES: Lazy<alloc::vec::Vec<&str>> = Lazy::new(|| {
-    alloc::vec![
-        CURRENT_NETWORK,
-        PRIVATE_NETWORK_10,
-        SHARED_ADDRESS_SPACE,
-        LOOPBACK,
-        LINK_LOCAL,
-        PRIVATE_NETWORK_172_16,
-        IETF_PROTOCOL_RESERVED,
-        DUAL_STACK_LITE,
-        TEST_NET_1,
-        IPV6_TO_IPV4_RELAY,
-        PRIVATE_NETWORK_192_168,
-        BENCHMARK_TESTS,
-        TEST_NET_2,
-        TEST_NET_3,
-        MULTICAST,
-        RESERVED,
-        BROADCAST,
-    ]
-});
+pub const RESERVED_RANGES: &[&str] = &[
+    CURRENT_NETWORK,
+    PRIVATE_NETWORK_10,
+    SHARED_ADDRESS_SPACE,
+    LOOPBACK,
+    LINK_LOCAL,
+    PRIVATE_NETWORK_172_16,
+    IETF_PROTOCOL_RESERVED,
+    DUAL_STACK_LITE,
+    TEST_NET_1,
+    IPV6_TO_IPV4_RELAY,
+    PRIVATE_NETWORK_192_168,
+    BENCHMARK_TESTS,
+    TEST_NET_2,
+    TEST_NET_3,
+    MULTICAST,
+    RESERVED,
+    BROADCAST,
+];
 
 #[allow(dead_code)]
 /// Last ip
@@ -60,7 +60,7 @@ pub const LOOPBACK: &str = "127.0.0.0/8";
 pub const LOCALHOST: &str = "127.0.0.1";
 
 /// Autoconfiguration when no IP address available
-/// [RFC 3972](https://tools.ietf.org/html/rfc3972)
+/// [RFC 3927](https://tools.ietf.org/html/rfc3927)
 pub const LINK_LOCAL: &str = "169.254.0.0/16";
 
 /// Private network
@@ -120,13 +120,104 @@ pub const RESERVED: &str = "240.0.0.0/4";
 /// [RFC 919](https://tools.ietf.org/html/rfc919)
 pub const BROADCAST: &str = "255.255.255.255";
 
-pub fn bin_u32(number: u32) -> alloc::string::String {
-    alloc::format!("0b{:b}", number)
+const OCTET_ASCII_TABLE: [[u8; 3]; 256] = build_octet_ascii_table();
+const OCTET_LEN_TABLE: [u8; 256] = build_octet_len_table();
+
+#[cold]
+fn push_generated_ascii_slow(out: &mut alloc::string::String, bytes: &[u8]) {
+    for &byte in bytes {
+        out.push(char::from(byte));
+    }
 }
+
+#[inline]
+fn generated_ascii_string(bytes: &[u8]) -> alloc::string::String {
+    match core::str::from_utf8(bytes) {
+        Ok(text) => alloc::string::String::from(text),
+        Err(_) => {
+            let mut out = alloc::string::String::with_capacity(bytes.len());
+            push_generated_ascii_slow(&mut out, bytes);
+            out
+        }
+    }
+}
+
+#[inline]
+fn generated_ascii_vec_string(bytes: alloc::vec::Vec<u8>) -> alloc::string::String {
+    match alloc::string::String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) => {
+            let bytes = err.into_bytes();
+            generated_ascii_string(&bytes)
+        }
+    }
+}
+
+#[inline]
+fn fmt_generated_ascii(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+    match core::str::from_utf8(bytes) {
+        Ok(text) => f.write_str(text),
+        Err(_) => fmt_generated_ascii_slow(f, bytes),
+    }
+}
+
+#[cold]
+fn fmt_generated_ascii_slow(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+    for &byte in bytes {
+        fmt::Write::write_char(f, char::from(byte))?;
+    }
+    Ok(())
+}
+
+pub fn bin_u32(number: u32) -> alloc::string::String {
+    let bits = usize::max(1, (32 - number.leading_zeros()) as usize);
+    let mut buf = [0u8; 34];
+    buf[0] = b'0';
+    buf[1] = b'b';
+
+    let mut i = 0usize;
+    while i < bits {
+        let shift = bits - 1 - i;
+        buf[2 + i] = b'0' + ((number >> shift) & 1) as u8;
+        i += 1;
+    }
+
+    generated_ascii_string(&buf[..2 + bits])
+}
+
+const fn build_octet_ascii_table() -> [[u8; 3]; 256] {
+    let mut table = [[b'0'; 3]; 256];
+    let mut i = 0;
+    while i < 256 {
+        let value = i as u16;
+        table[i][0] = b'0' + ((value / 100) % 10) as u8;
+        table[i][1] = b'0' + ((value / 10) % 10) as u8;
+        table[i][2] = b'0' + (value % 10) as u8;
+        i += 1;
+    }
+    table
+}
+
+const fn build_octet_len_table() -> [u8; 256] {
+    let mut table = [1u8; 256];
+    let mut i = 0;
+    while i < 256 {
+        table[i] = if i >= 100 {
+            3
+        } else if i >= 10 {
+            2
+        } else {
+            1
+        };
+        i += 1;
+    }
+    table
+}
+
 /// Validates a dotted-quad ip address using regex
 ///
 /// The string is considered a valid dotted-quad address if it consists of
-/// one to four octets (0-255) seperated by periods (.).
+/// exactly four octets (0-255) separated by periods (.).
 ///
 /// Note: This function uses regex matching. For better performance,
 /// consider using `validate_ip()` which uses the optimized parser.
@@ -138,17 +229,18 @@ pub fn bin_u32(number: u32) -> alloc::string::String {
 /// assert_eq!(validate_ip_re("127.0.0.1"), true);
 /// assert_eq!(validate_ip_re("127.0.0.x"), false);
 /// ```
+#[cfg(feature = "std")]
 pub fn validate_ip_re(ip: &str) -> bool {
     IPV4_RE.is_match(ip)
         && ip
             .split('.')
-            .all(|q| q.parse::<u32>().is_ok_and(|q| q < 256))
+            .all(|q| !(q.len() > 1 && q.as_bytes()[0] == b'0') && q.parse::<u8>().is_ok())
 }
 
 /// Validates a dotted-quad ip address (optimized)
 ///
 /// The string is considered a valid dotted-quad address if it consists of
-/// one to four octets (0-255) seperated by periods (.).
+/// exactly four octets (0-255) separated by periods (.).
 ///
 /// This function uses the optimized `ip2long` parser for validation,
 /// making it significantly faster than `validate_ip_re()` which uses regex.
@@ -180,6 +272,7 @@ pub fn validate_ip(ip: &str) -> bool {
 /// assert_eq!(validate_cidr_re("127.0.0.1/32"), true);
 /// assert_eq!(validate_cidr_re("127.0.0.1"), false);
 /// ```
+#[cfg(feature = "std")]
 pub fn validate_cidr_re(cidr: &str) -> bool {
     let Some(slash_pos) = cidr.bytes().position(|b| b == b'/') else {
         return false;
@@ -188,22 +281,13 @@ pub fn validate_cidr_re(cidr: &str) -> bool {
     let ip_part = &cidr[..slash_pos];
     let mask_bytes = &cidr.as_bytes()[slash_pos + 1..];
 
-    // Early validation: mask must be 1-2 digits
-    if mask_bytes.is_empty() || mask_bytes.len() > 2 {
+    // Exactly one slash.
+    if mask_bytes.contains(&b'/') {
         return false;
     }
 
-    // Parse prefix
-    let mut prefix: u8 = 0;
-    for &b in mask_bytes {
-        if !b.is_ascii_digit() {
-            return false;
-        }
-        prefix = prefix * 10 + (b - b'0');
-    }
-
-    // Validate prefix range (0-32) and IP (using regex validation)
-    prefix <= 32 && validate_ip_re(ip_part)
+    // Validate prefix range (0-32) and strict dotted-quad IP.
+    parse_prefix(mask_bytes, 32).is_some() && validate_ip_re(ip_part)
 }
 
 /// Validate a [CIDR](https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing) notation (optimized)
@@ -225,58 +309,77 @@ pub fn validate_cidr_re(cidr: &str) -> bool {
 pub fn validate_cidr(cidr: &str) -> bool {
     let bytes = cidr.as_bytes();
     let len = bytes.len();
-    let mut idx = 0;
+    if !(9..=19).contains(&len) {
+        return false;
+    }
 
-    // Parse IPv4 part (1–4 octets, 0–255 each), stopping at '/'
-    let mut octet_count = 0;
-    let mut current: u16 = 0;
-    let mut has_digit = false;
+    let mut idx = 0usize;
+    let mut octets_done = 0u8;
+    let mut octet = 0u16;
+    let mut octet_len = 0u8;
+
     while idx < len {
         let b = bytes[idx];
         if b == b'/' {
             break;
-        } else if b == b'.' {
-            if !has_digit || octet_count >= 3 {
+        }
+
+        if b == b'.' {
+            if octet_len == 0 || octets_done >= 3 {
                 return false;
             }
-            octet_count += 1;
-            current = 0;
-            has_digit = false;
-        } else if b.is_ascii_digit() {
-            current = current * 10 + (b - b'0') as u16;
-            if current > 255 {
-                return false;
-            }
-            has_digit = true;
-        } else {
+            octets_done += 1;
+            octet = 0;
+            octet_len = 0;
+            idx += 1;
+            continue;
+        }
+
+        if !b.is_ascii_digit() {
             return false;
+        }
+
+        let digit = u16::from(b - b'0');
+        if octet_len == 0 {
+            octet = digit;
+            octet_len = 1;
+        } else {
+            if octet_len == 1 && octet == 0 {
+                return false;
+            }
+            octet = octet * 10 + digit;
+            octet_len += 1;
+            if octet_len > 3 || octet > 255 {
+                return false;
+            }
         }
         idx += 1;
     }
 
-    // Need a '/' and at least one digit in the last octet
-    if idx >= len || !has_digit {
+    if idx >= len || octets_done != 3 || octet_len == 0 {
         return false;
     }
 
-    // Parse prefix (1–2 digits, 0–32)
-    idx += 1; // skip '/'
-    let remaining = len - idx;
-    if remaining == 0 || remaining > 2 {
+    idx += 1;
+    let prefix_len = len - idx;
+    if prefix_len == 0 || prefix_len > 3 {
         return false;
     }
 
-    let mut prefix: u8 = 0;
+    let mut prefix = 0u32;
     while idx < len {
         let b = bytes[idx];
         if !b.is_ascii_digit() {
             return false;
         }
-        prefix = prefix * 10 + (b - b'0');
+        prefix = (prefix * 10) + u32::from(b - b'0');
+        if prefix > 32 {
+            return false;
+        }
         idx += 1;
     }
 
-    prefix <= 32
+    true
 }
 
 /// Validate that a dotted-quad ip address is a valid [netmask](https://en.wikipedia.org/wiki/Subnetwork)
@@ -292,10 +395,10 @@ pub fn validate_netmask(netmask: &str) -> bool {
     parse_contiguous_netmask(netmask).is_some()
 }
 
-/// Validate a dotted-quad ip adress including a netmask
+/// Validate a dotted-quad ip address including a netmask
 ///
 /// The string is considered a valid dotted-quad address with netmask if it
-/// consists of one to four octets (0-255) seperated by periods (.) followed
+/// consists of four octets (0-255) separated by periods (.) followed
 /// by a forward slash (/) and a subnet bitmask which is expressed in
 /// dotted-quad format.
 ///
@@ -307,17 +410,21 @@ pub fn validate_netmask(netmask: &str) -> bool {
 /// assert_eq!(validate_subnet("128.0.0.1"), false);
 /// ```
 pub fn validate_subnet(subnet: &str) -> bool {
-    subnet.contains('/') && {
-        let mut parts = subnet.splitn(2, '/');
-        let start = parts.next().unwrap_or("");
-        let mask = parts.next().unwrap_or("");
-        !mask.is_empty() && validate_ip(start) && validate_netmask(mask)
-    }
+    let Some(idx) = subnet.bytes().position(|b| b == b'/') else {
+        return false;
+    };
+    let start = &subnet[..idx];
+    let mask = &subnet[idx + 1..];
+    !start.is_empty()
+        && !mask.is_empty()
+        && validate_ip(start)
+        && parse_contiguous_netmask(mask).is_some()
 }
 
-// Fast parser shared by IPv4 helpers.
+// Legacy parser used by `ip2network`, which intentionally preserves historical
+// shorthand behavior (1-4 octets).
 #[inline(always)]
-fn parse_ipv4_octets(ip: &str) -> Result<([u32; 4], usize)> {
+fn parse_ipv4_octets_legacy(ip: &str) -> Result<([u32; 4], usize)> {
     let mut octets = [0u32; 4];
     let mut idx = 0;
     let mut current: u32 = 0;
@@ -350,36 +457,82 @@ fn parse_ipv4_octets(ip: &str) -> Result<([u32; 4], usize)> {
     Ok((octets, idx + 1))
 }
 
+// Strict dotted-quad parser (exactly 4 octets, no multi-digit leading zeros).
+#[inline(always)]
+fn parse_ipv4_quad(ip: &str) -> Result<u32> {
+    let bytes = ip.as_bytes();
+    if bytes.len() < 7 || bytes.len() > 15 {
+        return Err(Error::V4IP());
+    }
+
+    let mut out = 0u32;
+    let mut octets_done = 0u8;
+    let mut octet = 0u16;
+    let mut octet_len = 0u8;
+
+    for &b in bytes {
+        if b == b'.' {
+            if octet_len == 0 || octets_done >= 3 {
+                return Err(Error::V4IP());
+            }
+            out = (out << 8) | u32::from(octet);
+            octets_done += 1;
+            octet = 0;
+            octet_len = 0;
+            continue;
+        }
+
+        if !b.is_ascii_digit() {
+            return Err(Error::V4IP());
+        }
+
+        let digit = u16::from(b - b'0');
+        if octet_len == 0 {
+            octet = digit;
+            octet_len = 1;
+            continue;
+        }
+
+        if octet_len == 1 && octet == 0 {
+            return Err(Error::V4IP());
+        }
+
+        octet = octet * 10 + digit;
+        octet_len += 1;
+        if octet_len > 3 || octet > 255 {
+            return Err(Error::V4IP());
+        }
+    }
+
+    if octets_done != 3 || octet_len == 0 {
+        return Err(Error::V4IP());
+    }
+
+    Ok((out << 8) | u32::from(octet))
+}
+
 /// Convert a dotted-quad ip address to a network byte order 32 bit integer
 ///
 /// # Example
 ///
 /// ```
 /// use iptools::ipv4::ip2long;
-/// assert_eq!(ip2long("127"), Ok(2130706432));
+/// assert_eq!(ip2long("127.0.0.1"), Ok(2130706433));
+/// assert!(ip2long("127").is_err());
 /// assert_eq!(ip2long("127.0.0.256").is_err(), true);
 /// ```
+#[inline(always)]
 pub fn ip2long(ip: &str) -> Result<u32> {
-    let (octets, count) = parse_ipv4_octets(ip)?;
-
-    // Reconstruct based on your original shorthand logic:
-    // 1 part  ("10")       -> 10.0.0.0
-    // 2 parts ("10.1")     -> 10.0.0.1  (Gap filled with 0s)
-    // 3 parts ("10.1.2")   -> 10.1.0.2
-    // 4 parts ("10.1.2.3") -> 10.1.2.3
-    match count {
-        4 => Ok((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]),
-        3 => Ok((octets[0] << 24) | (octets[1] << 16) | octets[2]),
-        2 => Ok((octets[0] << 24) | octets[1]),
-        1 => Ok(octets[0] << 24),
-        _ => Err(Error::V4IP()),
-    }
+    parse_ipv4_quad(ip)
 }
 
 /// Convert a dotted-quad ip to base network number
 ///
 /// This differs from `ip2long` in that partial addresses as treated as
 /// all network instead of network plus host (eg. '127.1' expands to '127.1.0.0')
+/// and shorthand forms are intentionally accepted for compatibility with the
+/// historical `iptools` API. Use [`ip2long`] when you need strict dotted-quad
+/// parsing.
 ///
 /// # Example
 ///
@@ -391,14 +544,14 @@ pub fn ip2long(ip: &str) -> Result<u32> {
 /// assert_eq!(ip2network("ravioli"), None);
 /// ```
 pub fn ip2network(ip: &str) -> Option<u32> {
-    let (octets, count) = parse_ipv4_octets(ip).ok()?;
-
-    let mut netw: u32 = 0;
-    for (i, &octet) in octets.iter().enumerate() {
-        let val = if i < count { octet } else { 0 };
-        netw = (netw << 8) | val;
+    let (octets, count) = parse_ipv4_octets_legacy(ip).ok()?;
+    let mut out = 0u32;
+    let mut i = 0usize;
+    while i < count {
+        out |= octets[i] << (24 - (i as u32 * 8));
+        i += 1;
     }
-    Some(netw)
+    Some(out)
 }
 
 /// Convert a network byte order 32 bit integer to a dotted quad ip address
@@ -423,21 +576,25 @@ pub fn long2ip(ip_dec: u32) -> alloc::string::String {
         if i > 0 {
             buf.push(b'.');
         }
-
-        if octet >= 100 {
-            buf.push(b'0' + octet / 100);
-            buf.push(b'0' + (octet % 100) / 10);
-            buf.push(b'0' + octet % 10);
-        } else if octet >= 10 {
-            buf.push(b'0' + octet / 10);
-            buf.push(b'0' + octet % 10);
-        } else {
-            buf.push(b'0' + octet);
+        let idx = octet as usize;
+        let digits = OCTET_ASCII_TABLE[idx];
+        match OCTET_LEN_TABLE[idx] {
+            3 => {
+                buf.push(digits[0]);
+                buf.push(digits[1]);
+                buf.push(digits[2]);
+            }
+            2 => {
+                buf.push(digits[1]);
+                buf.push(digits[2]);
+            }
+            _ => buf.push(digits[2]),
         }
     }
 
-    alloc::string::String::from_utf8(buf).unwrap()
+    generated_ascii_vec_string(buf)
 }
+/// Convert a dotted-quad IPv4 address to an eight-character lowercase hex string.
 ///
 /// # Example
 ///
@@ -447,7 +604,19 @@ pub fn long2ip(ip_dec: u32) -> alloc::string::String {
 /// assert_eq!(ip2hex("127.0.0.1"), Ok("7f000001".to_string()));
 /// ```
 pub fn ip2hex(ip: &str) -> Result<alloc::string::String> {
-    Ok(alloc::format!("{:08x}", ip2long(ip)?))
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let value = ip2long(ip)?;
+    let mut buf = [0u8; 8];
+    let mut shift = 28u32;
+    let mut i = 0usize;
+    while i < buf.len() {
+        buf[i] = HEX[((value >> shift) & 0x0f) as usize];
+        shift = shift.saturating_sub(4);
+        i += 1;
+    }
+
+    Ok(generated_ascii_string(&buf))
 }
 
 /// Convert a hex encoded integer to a dotted-quad ip address
@@ -472,22 +641,11 @@ pub fn hex2ip(hex_str: &str) -> Result<alloc::string::String> {
 /// ```
 /// use iptools::ipv4::cidr2block;
 /// assert_eq!(cidr2block("127.0.0.1/32"), Ok(("127.0.0.1".to_string(), "127.0.0.1".to_string())));
-/// assert_eq!(cidr2block("127/8"), Ok(("127.0.0.0".to_string(), "127.255.255.255".to_string())));
+/// assert_eq!(cidr2block("127.0.0.0/8"), Ok(("127.0.0.0".to_string(), "127.255.255.255".to_string())));
 /// ```
 pub fn cidr2block(cidr: &str) -> Result<(alloc::string::String, alloc::string::String)> {
-    if let Some(idx) = cidr.find('/') {
-        let ip_str = &cidr[..idx];
-        let prefix_str = &cidr[idx + 1..];
-
-        if let Ok(prefix) = prefix_str.parse::<u32>() {
-            if prefix <= 32 {
-                if let Some(network) = ip2network(ip_str) {
-                    return Ok(_block_from_ip_and_prefix(network, prefix));
-                }
-            }
-        }
-    }
-    Err(Error::V4CIDR())
+    let (start, end) = cidr_bounds(cidr)?;
+    Ok((long2ip(start), long2ip(end)))
 }
 
 /// Convert a dotted-quad netmask into a CIDR prefix
@@ -507,7 +665,7 @@ pub fn netmask2prefix(mask: &str) -> u32 {
 
 #[inline(always)]
 fn parse_contiguous_netmask(mask: &str) -> Option<u32> {
-    ip2network(mask).and_then(|value| {
+    ip2long(mask).ok().and_then(|value| {
         let inv = !value;
         if (inv & inv.wrapping_add(1)) == 0 {
             Some(value)
@@ -524,23 +682,66 @@ fn parse_contiguous_netmask(mask: &str) -> Option<u32> {
 /// ```
 /// use iptools::ipv4::subnet2block;
 /// assert_eq!(subnet2block("127.0.0.1/255.255.255.255"), Some(("127.0.0.1".to_string(), "127.0.0.1".to_string())));
-/// assert_eq!(subnet2block("127/255"), Some(("127.0.0.0".to_string(), "127.255.255.255".to_string())));
+/// assert_eq!(subnet2block("127.0.0.0/255.0.0.0"), Some(("127.0.0.0".to_string(), "127.255.255.255".to_string())));
 /// ```
 pub fn subnet2block(subnet: &str) -> Option<(alloc::string::String, alloc::string::String)> {
-    if !validate_subnet(subnet) {
+    let idx = subnet.bytes().position(|b| b == b'/')?;
+    let ip_part = &subnet[..idx];
+    let mask_part = &subnet[idx + 1..];
+
+    if ip_part.is_empty() || mask_part.is_empty() {
         return None;
     }
 
-    let mut parts = subnet.splitn(2, '/');
-    let ip_netmask_first = parts.next().unwrap_or("");
-    let ip_netmask_second = parts.next().unwrap_or("");
-    let prefix = netmask2prefix(ip_netmask_second);
+    let network = ip2long(ip_part).ok()?;
+    let mask = parse_contiguous_netmask(mask_part)?;
+    let prefix = mask.count_ones();
+    Some(_block_from_ip_and_prefix(network, prefix))
+}
 
-    if let Some(network) = ip2network(ip_netmask_first) {
-        return Some(_block_from_ip_and_prefix(network, prefix));
+/// Convert a CIDR notation IPv4 address into raw numeric start/end bounds.
+///
+/// This is the allocation-free counterpart to [`cidr2block`]. Use it when
+/// callers need numeric bounds for range checks or storage and do not need
+/// dotted-quad strings.
+///
+/// # Example
+///
+/// ```
+/// use iptools::ipv4::cidr_bounds;
+/// assert_eq!(cidr_bounds("127.0.0.1/24"), Ok((2130706432, 2130706687)));
+/// ```
+#[inline(always)]
+pub fn cidr_bounds(cidr: &str) -> Result<(u32, u32)> {
+    let Some(idx) = cidr.find('/') else {
+        return Err(Error::V4CIDR());
+    };
+
+    let ip_str = &cidr[..idx];
+    let prefix_str = &cidr.as_bytes()[idx + 1..];
+    let Some(prefix) = parse_prefix(prefix_str, 32) else {
+        return Err(Error::V4CIDR());
+    };
+
+    let ip = ip2long(ip_str)?;
+    block_bounds(ip, prefix)
+}
+
+/// Convert a raw IPv4 address and CIDR prefix into raw numeric start/end bounds.
+///
+/// # Example
+///
+/// ```
+/// use iptools::ipv4::{block_bounds, ip2long};
+/// let ip = ip2long("10.0.1.2").unwrap();
+/// assert_eq!(block_bounds(ip, 16), Ok((167772160, 167837695)));
+/// ```
+#[inline(always)]
+pub fn block_bounds(ip: u32, prefix: u32) -> Result<(u32, u32)> {
+    if prefix > 32 {
+        return Err(Error::V4CIDR());
     }
-
-    None
+    Ok(block_from_ip_and_prefix_raw(ip, prefix))
 }
 
 // Creates a tuple of (start, end) dotted-quad addresses from the given ip address and prefix length
@@ -548,21 +749,92 @@ fn _block_from_ip_and_prefix(
     ip: u32,
     prefix: u32,
 ) -> (alloc::string::String, alloc::string::String) {
-    let shift = 32 - prefix;
-    let block_start = ip
-        .checked_shr(shift)
-        .unwrap_or(0)
-        .checked_shl(shift)
-        .unwrap_or(0);
+    let (block_start, block_end) = block_from_ip_and_prefix_raw(ip, prefix);
+    (long2ip(block_start), long2ip(block_end))
+}
 
-    let mut mask = u32::MAX;
-    if let Some(shift) = 1u32.checked_shl(shift) {
-        if let Some(sub) = shift.checked_sub(1) {
-            mask = sub;
+#[inline(always)]
+fn block_from_ip_and_prefix_raw(ip: u32, prefix: u32) -> (u32, u32) {
+    let netmask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    };
+    let block_start = ip & netmask;
+    let block_end = block_start | !netmask;
+    (block_start, block_end)
+}
+
+#[inline(always)]
+fn encode_long2ip(ip_dec: u32, buf: &mut [u8; 15]) -> usize {
+    let octets = [
+        ((ip_dec >> 24) & 0xFF) as u8,
+        ((ip_dec >> 16) & 0xFF) as u8,
+        ((ip_dec >> 8) & 0xFF) as u8,
+        (ip_dec & 0xFF) as u8,
+    ];
+
+    let mut len = 0usize;
+    for (i, &octet) in octets.iter().enumerate() {
+        if i > 0 {
+            buf[len] = b'.';
+            len += 1;
+        }
+        let idx = octet as usize;
+        let digits = OCTET_ASCII_TABLE[idx];
+        match OCTET_LEN_TABLE[idx] {
+            3 => {
+                buf[len] = digits[0];
+                buf[len + 1] = digits[1];
+                buf[len + 2] = digits[2];
+                len += 3;
+            }
+            2 => {
+                buf[len] = digits[1];
+                buf[len + 1] = digits[2];
+                len += 2;
+            }
+            _ => {
+                buf[len] = digits[2];
+                len += 1;
+            }
         }
     }
-    let block_end = block_start | mask;
-    (long2ip(block_start), long2ip(block_end))
+    len
+}
+
+#[inline(always)]
+pub(crate) fn push_long2ip(out: &mut alloc::string::String, ip_dec: u32) {
+    let mut buf = [0u8; 15];
+    let len = encode_long2ip(ip_dec, &mut buf);
+    for &byte in &buf[..len] {
+        out.push(char::from(byte));
+    }
+}
+
+pub(crate) fn fmt_long2ip(f: &mut fmt::Formatter<'_>, ip_dec: u32) -> fmt::Result {
+    let mut buf = [0u8; 15];
+    let len = encode_long2ip(ip_dec, &mut buf);
+    fmt_generated_ascii(f, &buf[..len])
+}
+
+#[inline(always)]
+fn parse_prefix(bytes: &[u8], max: u32) -> Option<u32> {
+    if bytes.is_empty() || bytes.len() > 3 {
+        return None;
+    }
+
+    let mut value = 0u32;
+    for &b in bytes {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        value = (value * 10) + u32::from(b - b'0');
+        if value > max {
+            return None;
+        }
+    }
+    Some(value)
 }
 
 #[cfg(test)]
