@@ -3,30 +3,21 @@
 use crate::error::{Error, Result};
 use crate::ipv4;
 use crate::ipv6;
+use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::iter::FusedIterator;
 use core::marker::PhantomData;
-use once_cell::sync::Lazy;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
 use std::net::{IpAddr as StdIpAddr, Ipv4Addr as StdIpv4Addr, Ipv6Addr as StdIpv6Addr};
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
 
-static RESERVED_IPV4_BLOCKS: Lazy<alloc::vec::Vec<(u32, u32)>> = Lazy::new(|| {
-    ipv4::RESERVED_RANGES
-        .iter()
-        .filter_map(|range| IpRange::<IPv4>::new(range, "").ok())
-        .map(|range| range.bounds())
-        .collect::<alloc::vec::Vec<(u32, u32)>>()
-});
-
-static RESERVED_IPV6_BLOCKS: Lazy<alloc::vec::Vec<(u128, u128)>> = Lazy::new(|| {
-    ipv6::RESERVED_RANGES
-        .iter()
-        .filter_map(|range| IpRange::<IPv6>::new(range, "").ok())
-        .map(|range| range.bounds())
-        .collect::<alloc::vec::Vec<(u128, u128)>>()
-});
+#[cfg(feature = "std")]
+static RESERVED_IPV4_BLOCKS: OnceLock<alloc::vec::Vec<(u32, u32)>> = OnceLock::new();
+#[cfg(feature = "std")]
+static RESERVED_IPV6_BLOCKS: OnceLock<alloc::vec::Vec<(u128, u128)>> = OnceLock::new();
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -59,20 +50,55 @@ struct RangeState<T> {
     remaining: T,
 }
 
+/// Parsed target bounds used by [`RangeFamily`] containment helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ParsedTarget<Addr> {
+    start: Addr,
+    end: Addr,
+    is_range: bool,
+}
+
+impl<Addr> ParsedTarget<Addr> {
+    #[inline(always)]
+    fn new(start: Addr, end: Addr, is_range: bool) -> Self {
+        Self {
+            start,
+            end,
+            is_range,
+        }
+    }
+}
+
+pub(crate) type ParsedTargetResult<Addr> = Result<Option<ParsedTarget<Addr>>>;
+
+mod private {
+    use super::{ParsedTargetResult, RangeFamily};
+
+    pub(crate) trait Sealed: Sized {
+        fn parse_target(ip: &str) -> ParsedTargetResult<<Self as RangeFamily>::Addr>
+        where
+            Self: RangeFamily;
+
+        fn is_reserved_range(
+            start: <Self as RangeFamily>::Addr,
+            end: <Self as RangeFamily>::Addr,
+        ) -> bool
+        where
+            Self: RangeFamily;
+    }
+}
+
 /// A generic IP address range.
 ///
 /// Use [`IPv4`] or [`IPv6`] markers to specify the IP version.
 ///
-/// [`IpRange::new`] treats its inputs as inclusive numeric bounds (`start`
-/// ≤ `end`). It does not interpret dotted netmasks passed via the `end`
-/// parameter—use the CIDR form (e.g. `"10.0.0.0/24"`) when you want network
-/// semantics or provide the literal closing address (`"10.0.0.0`,
-/// `"10.0.0.255"`). The internal length counters are `u32` (IPv4) and `u128`
-/// (IPv6), so attempting to create a range that spans every IPv4 address (all
-/// 4,294,967,296 values) will overflow during length calculation. Any proper
-/// subset fits (e.g., `0.0.0.0` → `255.255.255.254` plus a second block for the
-/// last address), but the one extra element in the full space pushes the count
-/// beyond what `u32` can hold.
+/// [`IpRange::new`] creates inclusive numeric ranges. When the second argument
+/// is present, it is a closing address, not a netmask. Use CIDR input or convert
+/// dotted netmask input with [`ipv4::subnet2block`] before constructing a range.
+///
+/// The internal length counters are `u32` (IPv4) and `u128` (IPv6). A range that
+/// spans the entire address space cannot be represented because its length is
+/// one larger than the address type can hold, so construction returns an error.
 ///
 /// # Examples
 ///
@@ -100,7 +126,8 @@ pub struct IpRange<T: RangeFamily> {
     _marker: PhantomData<T>,
 }
 
-pub trait RangeFamily {
+#[allow(private_bounds)]
+pub trait RangeFamily: private::Sealed {
     type Addr: Copy + Ord + Hash + 'static;
 
     const VERSION: IpVer;
@@ -110,29 +137,119 @@ pub trait RangeFamily {
     fn validate_cidr(cidr: &str) -> bool;
     fn parse_single(ip: &str) -> Result<Self::Addr>;
     fn parse_cidr(cidr: &str) -> Result<(Self::Addr, Self::Addr)>;
+    fn block_bounds(addr: Self::Addr, prefix: u8) -> Result<(Self::Addr, Self::Addr)>;
     fn format_addr(addr: Self::Addr) -> alloc::string::String;
     fn invalid_ip_error() -> Error;
+    fn invalid_range_error() -> Error;
     fn checked_add_one(value: Self::Addr) -> Option<Self::Addr>;
     fn wrapping_add_one(value: Self::Addr) -> Self::Addr;
+    fn wrapping_add_usize(value: Self::Addr, n: usize) -> Self::Addr;
     fn checked_sub_one(value: Self::Addr) -> Self::Addr;
     fn len(start: Self::Addr, end: Self::Addr) -> Self::Addr;
     fn remaining(end: Self::Addr, iter: Self::Addr) -> Self::Addr;
+    fn inclusive_size_hint(distance_to_end: Self::Addr) -> (usize, Option<usize>);
     fn size_hint(remaining: Self::Addr) -> (usize, Option<usize>);
-    fn reserved_blocks() -> &'static [(Self::Addr, Self::Addr)];
-    fn from_u128(value: u128) -> Self::Addr;
 }
 
+const IPV4_MAPPED_START: u128 = 0x0000_0000_0000_0000_0000_FFFF_0000_0000;
+const IPV4_MAPPED_END: u128 = 0x0000_0000_0000_0000_0000_FFFF_FFFF_FFFF;
+
 fn parse_endpoint<T: RangeFamily>(value: &str, want_start: bool) -> Result<T::Addr> {
-    if T::validate_cidr(value) {
+    if value.as_bytes().contains(&b'/') {
         let (start, end) = T::parse_cidr(value)?;
         return Ok(if want_start { start } else { end });
     }
-    if T::validate_ip(value) {
-        return T::parse_single(value);
-    }
-    Err(T::invalid_ip_error())
+    T::parse_single(value).map_err(|_| T::invalid_ip_error())
 }
 
+#[inline]
+fn parse_v4_target(target: &str) -> Result<(u32, u32, bool)> {
+    if target.as_bytes().contains(&b'/') {
+        let (start, end) = ipv4::cidr_bounds(target)?;
+        Ok((start, end, true))
+    } else {
+        let addr = ipv4::ip2long(target)?;
+        Ok((addr, addr, false))
+    }
+}
+
+#[inline]
+fn parse_v6_target(target: &str) -> Result<(u128, u128, bool)> {
+    if target.as_bytes().contains(&b'/') {
+        let (start, end) = ipv6::cidr_bounds(target)?;
+        Ok((start, end, true))
+    } else {
+        let addr = ipv6::ip2long(target)?;
+        Ok((addr, addr, false))
+    }
+}
+
+#[inline]
+fn reserved_v4_bounds(range: &str) -> Option<(u32, u32)> {
+    if range.as_bytes().contains(&b'/') {
+        ipv4::cidr_bounds(range).ok()
+    } else {
+        let addr = ipv4::ip2long(range).ok()?;
+        Some((addr, addr))
+    }
+}
+
+#[inline]
+fn reserved_v6_bounds(range: &str) -> Option<(u128, u128)> {
+    if range.as_bytes().contains(&b'/') {
+        ipv6::cidr_bounds(range).ok()
+    } else {
+        let addr = ipv6::ip2long(range).ok()?;
+        Some((addr, addr))
+    }
+}
+
+#[inline]
+fn is_reserved_v4_range(start: u32, end: u32) -> bool {
+    #[cfg(feature = "std")]
+    let blocks = RESERVED_IPV4_BLOCKS.get_or_init(|| {
+        ipv4::RESERVED_RANGES
+            .iter()
+            .filter_map(|&range| reserved_v4_bounds(range))
+            .collect()
+    });
+
+    #[cfg(feature = "std")]
+    return blocks
+        .iter()
+        .any(|&(block_start, block_end)| block_start <= start && end <= block_end);
+
+    #[cfg(not(feature = "std"))]
+    ipv4::RESERVED_RANGES.iter().any(|&range| {
+        reserved_v4_bounds(range)
+            .is_some_and(|(block_start, block_end)| block_start <= start && end <= block_end)
+    })
+}
+
+#[inline]
+fn is_reserved_v6_range(start: u128, end: u128) -> bool {
+    #[cfg(feature = "std")]
+    let blocks = RESERVED_IPV6_BLOCKS.get_or_init(|| {
+        ipv6::RESERVED_RANGES
+            .iter()
+            .filter_map(|&range| reserved_v6_bounds(range))
+            .collect()
+    });
+
+    #[cfg(feature = "std")]
+    return blocks
+        .iter()
+        .any(|&(block_start, block_end)| block_start <= start && end <= block_end);
+
+    #[cfg(not(feature = "std"))]
+    ipv6::RESERVED_RANGES.iter().any(|&range| {
+        reserved_v6_bounds(range)
+            .is_some_and(|(block_start, block_end)| block_start <= start && end <= block_end)
+    })
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) enum TargetRange {
     V4 {
         start: u32,
@@ -146,44 +263,28 @@ pub(crate) enum TargetRange {
     },
 }
 
+#[cfg(test)]
 impl TargetRange {
     fn parse(ip: &str) -> Result<Self> {
-        if ip.contains('/') {
-            if ip.contains(':') {
-                let (start, end) = ipv6::cidr2block(ip)?;
-                let start = ipv6::ip2long(&start)?;
-                let end = ipv6::ip2long(&end)?;
-                return Ok(Self::V6 {
-                    start,
-                    end,
-                    is_range: true,
-                });
-            } else {
-                let (start, end) = ipv4::cidr2block(ip)?;
-                let start = ipv4::ip2long(&start)?;
-                let end = ipv4::ip2long(&end)?;
-                return Ok(Self::V4 {
-                    start,
-                    end,
-                    is_range: true,
-                });
-            }
-        }
-
-        if ip.contains(':') {
-            let addr = ipv6::ip2long(ip)?;
+        let bytes = ip.as_bytes();
+        if bytes.contains(&b':') {
+            let (start, end, is_range) = parse_v6_target(ip)?;
             return Ok(Self::V6 {
-                start: addr,
-                end: addr,
-                is_range: false,
+                start,
+                end,
+                is_range,
             });
         }
 
-        let addr = ipv4::ip2long(ip).map_err(|_| Error::UnknownVersion())?;
+        let (start, end, is_range) = if bytes.contains(&b'/') {
+            parse_v4_target(ip)?
+        } else {
+            parse_v4_target(ip).map_err(|_| Error::UnknownVersion())?
+        };
         Ok(Self::V4 {
-            start: addr,
-            end: addr,
-            is_range: false,
+            start,
+            end,
+            is_range,
         })
     }
 
@@ -199,12 +300,17 @@ impl TargetRange {
 impl<T: RangeFamily> IpRange<T> {
     /// Creates a new IP range.
     ///
-    /// `start` accepts a single IP (`"10.0.0.1"`) or a CIDR (`"10.0.0.0/24"`). `end` is optional
-    /// (pass an empty string) when `start` already encodes the closing boundary via CIDR or when
-    /// you're creating a single-IP range. When you do provide `end`, it must be the literal final
-    /// address and **not** a dotted netmask or prefix length—the constructor does not try to infer
-    /// masks from the second argument. If you have an address plus mask, convert it to CIDR or to
-    /// the corresponding final IP before calling [`IpRange::new`].
+    /// `start` accepts a single IP (`"10.0.0.1"`) or a CIDR (`"10.0.0.0/24"`).
+    /// Pass an empty `end` when `start` already describes the whole range or
+    /// when you want a single-address range.
+    ///
+    /// When `end` is non-empty, the two arguments are inclusive bounds: `start`
+    /// is the lower endpoint and `end` is the upper endpoint. The constructor
+    /// does **not** treat `end` as a dotted netmask. For example,
+    /// `IpRange::<IPv4>::new("10.42.120.90", "255.255.252.0")` spans every
+    /// address from `10.42.120.90` through `255.255.252.0`; it does not create
+    /// the subnet `10.42.120.90/255.255.252.0`. If you have an address plus
+    /// netmask, convert it to CIDR or concrete block bounds first.
     ///
     /// Note: Unlike the Python `iptools` library, reversed bounds are rejected
     /// rather than normalized.
@@ -219,25 +325,57 @@ impl<T: RangeFamily> IpRange<T> {
     /// let r2 = IpRange::<IPv4>::new("192.168.1.0/24", "")?;
     ///
     /// // If you have an address + dotted netmask pair, normalize it first.
-    /// let block = ipv4::subnet2block("10.0.120.90/255.255.248.0").unwrap();
-    /// let cidr = IpRange::<IPv4>::new("10.0.120.0/21", "")?;
+    /// let block = ipv4::subnet2block("10.42.120.90/255.255.252.0").unwrap();
+    /// let cidr = IpRange::<IPv4>::new("10.42.120.0/22", "")?;
     /// let explicit = IpRange::<IPv4>::new(&block.0, &block.1)?;
     /// assert_eq!(cidr.len(), explicit.len());
     /// # Ok(())
     /// # }
     /// ```
     pub fn new(start: &str, end: &str) -> Result<IpRange<T>> {
-        let end_spec = if end.is_empty() { start } else { end };
-        let start_ip = parse_endpoint::<T>(start, true)?;
-        let end_ip = parse_endpoint::<T>(end_spec, false)?;
+        let (start_ip, end_ip) = if end.is_empty() {
+            if start.as_bytes().contains(&b'/') {
+                T::parse_cidr(start)?
+            } else {
+                let ip = T::parse_single(start)?;
+                (ip, ip)
+            }
+        } else {
+            (
+                parse_endpoint::<T>(start, true)?,
+                parse_endpoint::<T>(end, false)?,
+            )
+        };
 
         // Unlike Python iptools, reversed bounds are rejected.
+        Self::from_bounds(start_ip, end_ip)
+    }
+
+    /// Creates a new IP range from inclusive raw numeric bounds.
+    ///
+    /// This skips all string parsing and is the fastest constructor when
+    /// callers already have numeric addresses.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use iptools::iprange::{IpRange, IPv4};
+    ///
+    /// # fn main() -> iptools::error::Result<()> {
+    /// let range = IpRange::<IPv4>::from_bounds(0x0a00_0000, 0x0a00_00ff)?;
+    /// assert_eq!(range.len(), 256);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline(always)]
+    pub fn from_bounds(start_ip: T::Addr, end_ip: T::Addr) -> Result<IpRange<T>> {
+        // Unlike Python iptools, reversed bounds are rejected.
         if start_ip > end_ip {
-            return Err(Error::V4Subnet());
+            return Err(T::invalid_range_error());
         }
         let len = T::len(start_ip, end_ip);
         if len == T::zero() && start_ip != end_ip {
-            return Err(Error::V4Subnet());
+            return Err(T::invalid_range_error());
         }
         Ok(IpRange {
             ip_range: RangeState {
@@ -249,6 +387,28 @@ impl<T: RangeFamily> IpRange<T> {
             },
             _marker: PhantomData,
         })
+    }
+
+    /// Creates a new IP range from a raw numeric address and CIDR prefix.
+    ///
+    /// This computes the containing CIDR block without parsing or formatting
+    /// any strings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use iptools::iprange::{IpRange, IPv4};
+    ///
+    /// # fn main() -> iptools::error::Result<()> {
+    /// let range = IpRange::<IPv4>::from_addr_prefix(0x0a00_0102, 16)?;
+    /// assert_eq!(range.bounds(), (0x0a00_0000, 0x0a00_ffff));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline(always)]
+    pub fn from_addr_prefix(addr: T::Addr, prefix: u8) -> Result<IpRange<T>> {
+        let (start_ip, end_ip) = T::block_bounds(addr, prefix)?;
+        Self::from_bounds(start_ip, end_ip)
     }
 
     /// Returns the start and end IP addresses as strings.
@@ -333,71 +493,68 @@ impl<T: RangeFamily> IpRange<T> {
         self.ip_range.remaining
     }
 
-    #[inline]
-    fn convert_target(target: TargetRange) -> (T::Addr, T::Addr, bool) {
-        match (T::VERSION, target) {
-            (
-                IpVer::V4,
-                TargetRange::V4 {
-                    start,
-                    end,
-                    is_range,
-                },
-            ) => (
-                T::from_u128(start as u128),
-                T::from_u128(end as u128),
-                is_range,
-            ),
-            (
-                IpVer::V4,
-                TargetRange::V6 {
-                    start,
-                    end,
-                    is_range,
-                },
-            ) => (T::from_u128(start), T::from_u128(end), is_range),
-            (
-                IpVer::V6,
-                TargetRange::V6 {
-                    start,
-                    end,
-                    is_range,
-                },
-            ) => (T::from_u128(start), T::from_u128(end), is_range),
-            (
-                IpVer::V6,
-                TargetRange::V4 {
-                    start,
-                    end,
-                    is_range,
-                },
-            ) => (
-                T::from_u128(start as u128),
-                T::from_u128(end as u128),
-                is_range,
-            ),
-            _ => (T::zero(), T::zero(), false),
+    /// Returns the next address as a numeric value without string allocation.
+    #[inline(always)]
+    pub fn next_addr(&mut self) -> Option<T::Addr> {
+        if self.ip_range.remaining == T::zero() {
+            return None;
         }
+
+        let out = self.ip_range.next_ip;
+        self.ip_range.next_ip = T::wrapping_add_one(out);
+        self.ip_range.remaining = T::checked_sub_one(self.ip_range.remaining);
+        Some(out)
+    }
+
+    /// Iterates over raw numeric addresses without allocating intermediate strings.
+    #[inline(always)]
+    pub fn for_each_addr<F>(&self, mut f: F)
+    where
+        F: FnMut(T::Addr),
+    {
+        if self.ip_range.len == T::zero() {
+            return;
+        }
+
+        let end = self.ip_range.end_ip;
+        let mut current = self.ip_range.start_ip;
+        loop {
+            f(current);
+            if current == end {
+                break;
+            }
+            current = T::wrapping_add_one(current);
+        }
+    }
+
+    #[inline]
+    fn parse_target_for_family(ip: &str) -> ParsedTargetResult<T::Addr> {
+        <T as private::Sealed>::parse_target(ip)
     }
 
     /// Checks whether an IP address or CIDR block sits fully inside this range.
     ///
-    /// `contains` performs a straight numeric comparison: the requested IP (or
-    /// the start/end of a CIDR block) must fall between the range's inclusive
-    /// bounds. Nothing else is inferred. If you created the range with a pair
-    /// of strings, the second argument is treated as the literal closing address
-    /// and not as a dotted netmask. When you want subnet semantics, build the
-    /// range from a CIDR string or provide the concrete closing address. When
-    /// you already have parsed numeric values (e.g., from [`std::net::Ipv4Addr`]
+    /// `contains` performs a straight numeric comparison against this range's
+    /// existing inclusive bounds. The requested IP, or both endpoints of the
+    /// requested CIDR block, must fall inside the range. Nothing else is
+    /// inferred from how the range was constructed.
+    ///
+    /// When you already have parsed numeric values (e.g., from [`std::net::Ipv4Addr`]
     /// or [`std::net::Ipv6Addr`]), use [`IpRange::contains_addr`] or
     /// [`IpRange::contains_range`] to skip the parsing overhead.
+    /// For strict same-family string parsing with mismatch-as-error semantics,
+    /// use `contains_strict` on `IpRange<IPv4>` or `IpRange<IPv6>`.
+    /// Valid targets from the other IP family return `Ok(false)`, except that
+    /// IPv4 ranges accept IPv4-mapped IPv6 targets such as `::ffff:192.0.2.1`.
     ///
-    /// Passing dotted netmasks to `IpRange::new` does **not** convert them to CIDR
-    /// bounds. `"10.0.0.1", "255.255.255.0"` spans the numeric space between those
-    /// literal addresses, not the `/24` network the mask implies. When you obtain
-    /// "IP + netmask" pairs, turn the mask into a prefix (e.g., via
-    /// [`ipv4::netmask2prefix`]) and build the range from CIDR or by computing the
-    /// actual closing IP before calling `contains`.
+    /// This matters when the range was created from two strings. For example,
+    /// `IpRange::<IPv4>::new("10.42.120.90", "255.255.252.0")` means every
+    /// address from `10.42.120.90` through `255.255.252.0`, so it contains
+    /// `192.168.44.10`. To model `10.42.120.90/255.255.252.0`, convert the
+    /// subnet to its real block bounds as shown below. The same inclusive-bound
+    /// rule applies to IPv6: `IpRange::<IPv6>::new("fd00:10::", "fd00:ffff::")`
+    /// contains `fd00:8000::1`; use CIDR input such as `"fd00:10::/64"` when
+    /// you want IPv6 subnet semantics.
     ///
     /// # Examples
     ///
@@ -435,13 +592,41 @@ impl<T: RangeFamily> IpRange<T> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// ```
+    /// use iptools::{iprange::{IpRange, IPv4}, ipv4};
+    ///
+    /// # fn main() -> iptools::error::Result<()> {
+    /// let bounded_range = IpRange::<IPv4>::new("10.42.120.90", "255.255.252.0")?;
+    /// assert!(bounded_range.contains("192.168.44.10")?);
+    ///
+    /// let block = ipv4::subnet2block("10.42.120.90/255.255.252.0").unwrap();
+    /// let subnet = IpRange::<IPv4>::new(&block.0, &block.1)?;
+    /// assert!(!subnet.contains("192.168.44.10")?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ```
+    /// use iptools::iprange::{IpRange, IPv6};
+    ///
+    /// # fn main() -> iptools::error::Result<()> {
+    /// let bounded_range = IpRange::<IPv6>::new("fd00:10::", "fd00:ffff::")?;
+    /// assert!(bounded_range.contains("fd00:8000::1")?);
+    ///
+    /// let subnet = IpRange::<IPv6>::new("fd00:10::/64", "")?;
+    /// assert!(!subnet.contains("fd00:8000::1")?);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn contains(&self, ip: &str) -> Result<bool> {
-        let target = TargetRange::parse(ip)?;
-        let (start, end, is_range) = Self::convert_target(target);
-        if is_range {
-            Ok(self.contains_range(start, end))
+        let Some(target) = Self::parse_target_for_family(ip)? else {
+            return Ok(false);
+        };
+        if target.is_range {
+            Ok(self.contains_range(target.start, target.end))
         } else {
-            Ok(self.contains_addr(start))
+            Ok(self.contains_addr(target.start))
         }
     }
 
@@ -475,11 +660,13 @@ impl<T: RangeFamily> IpRange<T> {
     /// # }
     /// ```
     pub fn is_reserved(ip: &str) -> Result<bool> {
-        let target = TargetRange::parse(ip)?;
-        let (start, end, _) = Self::convert_target(target);
-        Ok(T::reserved_blocks()
-            .iter()
-            .any(|&(block_start, block_end)| block_start <= start && end <= block_end))
+        let Some(target) = Self::parse_target_for_family(ip)? else {
+            return Ok(false);
+        };
+        Ok(<T as private::Sealed>::is_reserved_range(
+            target.start,
+            target.end,
+        ))
     }
 }
 
@@ -489,6 +676,93 @@ pub struct AddrIterator<T: RangeFamily> {
     end: T::Addr,
     _marker: PhantomData<T>,
 }
+
+/// Lightweight adapter over numeric addresses with on-demand string formatting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AddrView<T: RangeFamily> {
+    addr: T::Addr,
+    _marker: PhantomData<T>,
+}
+
+impl<T: RangeFamily> AddrView<T> {
+    #[inline(always)]
+    fn new(addr: T::Addr) -> Self {
+        Self {
+            addr,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the raw numeric address value.
+    #[inline(always)]
+    pub fn raw(self) -> T::Addr {
+        self.addr
+    }
+
+    /// Formats the address into its canonical textual representation.
+    #[inline(always)]
+    pub fn to_ip_string(self) -> alloc::string::String {
+        T::format_addr(self.addr)
+    }
+}
+
+impl fmt::Display for AddrView<IPv4> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        ipv4::fmt_long2ip(f, self.addr)
+    }
+}
+
+impl fmt::Display for AddrView<IPv6> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        ipv6::fmt_long2ip(f, self.addr)
+    }
+}
+
+/// Iterator over [`AddrView`] values.
+pub struct AddrViewIterator<T: RangeFamily> {
+    inner: AddrIterator<T>,
+}
+
+impl<T: RangeFamily> Iterator for AddrViewIterator<T> {
+    type Item = AddrView<T>;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(AddrView::new)
+    }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+
+    #[inline(always)]
+    fn count(self) -> usize {
+        self.inner.count()
+    }
+
+    #[inline(always)]
+    fn last(self) -> Option<Self::Item> {
+        self.inner.last().map(AddrView::new)
+    }
+
+    #[inline(always)]
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.inner.nth(n).map(AddrView::new)
+    }
+
+    #[inline(always)]
+    fn fold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        self.inner
+            .fold(init, |acc, addr| f(acc, AddrView::new(addr)))
+    }
+}
+
+impl<T: RangeFamily> FusedIterator for AddrViewIterator<T> {}
+impl ExactSizeIterator for AddrViewIterator<IPv4> {}
 
 impl<T: RangeFamily> Iterator for AddrIterator<T> {
     type Item = T::Addr;
@@ -508,12 +782,69 @@ impl<T: RangeFamily> Iterator for AddrIterator<T> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self.next {
             None => (0, Some(0)),
+            Some(current) => T::inclusive_size_hint(T::remaining(self.end, current)),
+        }
+    }
+
+    #[inline(always)]
+    fn count(self) -> usize {
+        match self.next {
+            None => 0,
             Some(current) => {
-                let remaining = T::remaining(self.end, current);
-                let inclusive = T::checked_add_one(remaining).unwrap_or(remaining);
-                T::size_hint(inclusive)
+                let (lo, _) = T::inclusive_size_hint(T::remaining(self.end, current));
+                lo
             }
         }
+    }
+
+    #[inline(always)]
+    fn last(self) -> Option<Self::Item> {
+        self.next.map(|_| self.end)
+    }
+
+    #[inline(always)]
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        let current = self.next?;
+        let remaining = T::remaining(self.end, current);
+        let (_, upper) = T::inclusive_size_hint(remaining);
+        if let Some(count) = upper {
+            if n >= count {
+                self.next = None;
+                return None;
+            }
+        }
+        let target = T::wrapping_add_usize(current, n);
+        if target < current || target > self.end {
+            self.next = None;
+            return None;
+        }
+        self.next = if target == self.end {
+            None
+        } else {
+            Some(T::wrapping_add_one(target))
+        };
+        Some(target)
+    }
+
+    #[inline(always)]
+    fn fold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        let Some(mut current) = self.next else {
+            return init;
+        };
+
+        let end = self.end;
+        let mut acc = init;
+        loop {
+            acc = f(acc, current);
+            if current == end {
+                break;
+            }
+            current = T::wrapping_add_one(current);
+        }
+        acc
     }
 }
 
@@ -534,11 +865,34 @@ impl<T: RangeFamily> IpRange<T> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline(always)]
     pub fn addrs(&self) -> AddrIterator<T> {
         AddrIterator {
             next: Some(self.ip_range.start_ip),
             end: self.ip_range.end_ip,
             _marker: PhantomData,
+        }
+    }
+
+    /// Returns an iterator over [`AddrView`] wrappers (numeric value + on-demand formatting).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iptools::iprange::{IpRange, IPv4};
+    ///
+    /// # fn main() -> iptools::error::Result<()> {
+    /// let range = IpRange::<IPv4>::new("10.0.0.1", "10.0.0.2")?;
+    /// let views = range.addrs_view().collect::<Vec<_>>();
+    /// assert_eq!(views[0].raw(), 167772161);
+    /// assert_eq!(views[1].to_ip_string(), "10.0.0.2");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline(always)]
+    pub fn addrs_view(&self) -> AddrViewIterator<T> {
+        AddrViewIterator {
+            inner: self.addrs(),
         }
     }
 }
@@ -548,18 +902,72 @@ impl<T: RangeFamily> Iterator for IpRange<T> {
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.ip_range.remaining == T::zero() {
-            return None;
-        }
-
-        let out = self.ip_range.next_ip;
-        self.ip_range.next_ip = T::wrapping_add_one(out);
-        self.ip_range.remaining = T::checked_sub_one(self.ip_range.remaining);
-        Some(T::format_addr(out))
+        self.next_addr().map(T::format_addr)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         T::size_hint(self.ip_range.remaining)
+    }
+
+    #[inline(always)]
+    fn count(self) -> usize {
+        let (lo, _) = T::size_hint(self.ip_range.remaining);
+        lo
+    }
+
+    #[inline(always)]
+    fn last(self) -> Option<Self::Item> {
+        if self.ip_range.remaining == T::zero() {
+            None
+        } else {
+            Some(T::format_addr(self.ip_range.end_ip))
+        }
+    }
+
+    #[inline(always)]
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        if self.ip_range.remaining == T::zero() {
+            return None;
+        }
+        let current = self.ip_range.next_ip;
+        let remaining = self.ip_range.remaining;
+        let (_, upper) = T::size_hint(remaining);
+        if let Some(count) = upper {
+            if n >= count {
+                self.ip_range.remaining = T::zero();
+                return None;
+            }
+        }
+        let target = T::wrapping_add_usize(current, n);
+        if target < current || target > self.ip_range.end_ip {
+            self.ip_range.remaining = T::zero();
+            return None;
+        }
+        self.ip_range.next_ip = T::wrapping_add_one(target);
+        self.ip_range.remaining = T::remaining(self.ip_range.end_ip, target);
+        Some(T::format_addr(target))
+    }
+
+    #[inline(always)]
+    fn fold<B, F>(self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        if self.ip_range.remaining == T::zero() {
+            return init;
+        }
+
+        let end = self.ip_range.end_ip;
+        let mut current = self.ip_range.next_ip;
+        let mut acc = init;
+        loop {
+            acc = f(acc, T::format_addr(current));
+            if current == end {
+                break;
+            }
+            current = T::wrapping_add_one(current);
+        }
+        acc
     }
 }
 
@@ -582,11 +990,37 @@ impl<T: RangeFamily> Hash for IpRange<T> {
     }
 }
 
+impl private::Sealed for IPv4 {
+    fn parse_target(ip: &str) -> ParsedTargetResult<u32> {
+        let bytes = ip.as_bytes();
+        if bytes.contains(&b':') {
+            let (start, end, is_range) = parse_v6_target(ip)?;
+            if start >= IPV4_MAPPED_START && end <= IPV4_MAPPED_END {
+                Ok(Some(ParsedTarget::new(
+                    (start & u128::from(u32::MAX)) as u32,
+                    (end & u128::from(u32::MAX)) as u32,
+                    is_range,
+                )))
+            } else {
+                Ok(None)
+            }
+        } else {
+            let (start, end, is_range) = parse_v4_target(ip)?;
+            Ok(Some(ParsedTarget::new(start, end, is_range)))
+        }
+    }
+
+    fn is_reserved_range(start: u32, end: u32) -> bool {
+        is_reserved_v4_range(start, end)
+    }
+}
+
 impl RangeFamily for IPv4 {
     type Addr = u32;
 
     const VERSION: IpVer = IpVer::V4;
 
+    #[inline(always)]
     fn zero() -> Self::Addr {
         0
     }
@@ -604,8 +1038,12 @@ impl RangeFamily for IPv4 {
     }
 
     fn parse_cidr(cidr: &str) -> Result<(Self::Addr, Self::Addr)> {
-        let (start, end) = ipv4::cidr2block(cidr)?;
-        Ok((ipv4::ip2long(&start)?, ipv4::ip2long(&end)?))
+        ipv4::cidr_bounds(cidr)
+    }
+
+    #[inline(always)]
+    fn block_bounds(addr: Self::Addr, prefix: u8) -> Result<(Self::Addr, Self::Addr)> {
+        ipv4::block_bounds(addr, u32::from(prefix))
     }
 
     fn format_addr(addr: Self::Addr) -> alloc::string::String {
@@ -616,37 +1054,71 @@ impl RangeFamily for IPv4 {
         Error::V4IP()
     }
 
+    #[inline(always)]
+    fn invalid_range_error() -> Error {
+        Error::V4Subnet()
+    }
+
     fn checked_add_one(value: Self::Addr) -> Option<Self::Addr> {
         value.checked_add(1)
     }
 
+    #[inline(always)]
     fn wrapping_add_one(value: Self::Addr) -> Self::Addr {
         value.wrapping_add(1)
+    }
+
+    #[inline(always)]
+    fn wrapping_add_usize(value: Self::Addr, n: usize) -> Self::Addr {
+        value.wrapping_add(n as u32)
     }
 
     fn checked_sub_one(value: Self::Addr) -> Self::Addr {
         value.saturating_sub(1)
     }
 
+    #[inline(always)]
     fn len(start: Self::Addr, end: Self::Addr) -> Self::Addr {
-        end - start + 1
+        end.wrapping_sub(start).wrapping_add(1)
     }
 
+    #[inline(always)]
     fn remaining(end: Self::Addr, iter: Self::Addr) -> Self::Addr {
         end.saturating_sub(iter)
+    }
+
+    fn inclusive_size_hint(distance_to_end: Self::Addr) -> (usize, Option<usize>) {
+        let count = u64::from(distance_to_end) + 1;
+        if count > usize::MAX as u64 {
+            (usize::MAX, None)
+        } else {
+            let count = count as usize;
+            (count, Some(count))
+        }
     }
 
     fn size_hint(remaining: Self::Addr) -> (usize, Option<usize>) {
         let remaining_usize = remaining as usize;
         (remaining_usize, Some(remaining_usize))
     }
+}
 
-    fn reserved_blocks() -> &'static [(Self::Addr, Self::Addr)] {
-        &RESERVED_IPV4_BLOCKS
+impl private::Sealed for IPv6 {
+    fn parse_target(ip: &str) -> ParsedTargetResult<u128> {
+        let bytes = ip.as_bytes();
+        if bytes.contains(&b':') {
+            let (start, end, is_range) = parse_v6_target(ip)?;
+            Ok(Some(ParsedTarget::new(start, end, is_range)))
+        } else {
+            match parse_v4_target(ip) {
+                Ok(_) => Ok(None),
+                Err(err) => Err(err),
+            }
+        }
     }
 
-    fn from_u128(value: u128) -> Self::Addr {
-        value as u32
+    fn is_reserved_range(start: u128, end: u128) -> bool {
+        is_reserved_v6_range(start, end)
     }
 }
 
@@ -672,8 +1144,11 @@ impl RangeFamily for IPv6 {
     }
 
     fn parse_cidr(cidr: &str) -> Result<(Self::Addr, Self::Addr)> {
-        let (start, end) = ipv6::cidr2block(cidr)?;
-        Ok((ipv6::ip2long(&start)?, ipv6::ip2long(&end)?))
+        ipv6::cidr_bounds(cidr)
+    }
+
+    fn block_bounds(addr: Self::Addr, prefix: u8) -> Result<(Self::Addr, Self::Addr)> {
+        ipv6::block_bounds(addr, prefix)
     }
 
     fn format_addr(addr: Self::Addr) -> alloc::string::String {
@@ -684,12 +1159,22 @@ impl RangeFamily for IPv6 {
         Error::V6IP()
     }
 
+    fn invalid_range_error() -> Error {
+        Error::V6Subnet()
+    }
+
     fn checked_add_one(value: Self::Addr) -> Option<Self::Addr> {
         value.checked_add(1)
     }
 
+    #[inline(always)]
     fn wrapping_add_one(value: Self::Addr) -> Self::Addr {
         value.wrapping_add(1)
+    }
+
+    #[inline(always)]
+    fn wrapping_add_usize(value: Self::Addr, n: usize) -> Self::Addr {
+        value.wrapping_add(n as u128)
     }
 
     fn checked_sub_one(value: Self::Addr) -> Self::Addr {
@@ -697,11 +1182,19 @@ impl RangeFamily for IPv6 {
     }
 
     fn len(start: Self::Addr, end: Self::Addr) -> Self::Addr {
-        end - start + 1
+        end.wrapping_sub(start).wrapping_add(1)
     }
 
+    #[inline(always)]
     fn remaining(end: Self::Addr, iter: Self::Addr) -> Self::Addr {
         end.saturating_sub(iter)
+    }
+
+    fn inclusive_size_hint(distance_to_end: Self::Addr) -> (usize, Option<usize>) {
+        match distance_to_end.checked_add(1) {
+            Some(count) => Self::size_hint(count),
+            None => (usize::MAX, None),
+        }
     }
 
     fn size_hint(remaining: Self::Addr) -> (usize, Option<usize>) {
@@ -714,21 +1207,82 @@ impl RangeFamily for IPv6 {
             (remaining_usize, Some(remaining_usize))
         }
     }
+}
 
-    fn reserved_blocks() -> &'static [(Self::Addr, Self::Addr)] {
-        &RESERVED_IPV6_BLOCKS
+impl IpRange<IPv4> {
+    /// Fast-path strict containment for IPv4 string targets (single IP or CIDR).
+    ///
+    /// This avoids cross-family auto-detection and parses only IPv4 syntax.
+    /// Unlike [`IpRange::contains`], family-mismatched input returns an error.
+    #[inline]
+    pub fn contains_strict(&self, target: &str) -> Result<bool> {
+        let (start, end, is_range) = parse_v4_target(target)?;
+        if is_range {
+            Ok(self.contains_range(start, end))
+        } else {
+            Ok(self.contains_addr(start))
+        }
     }
 
-    fn from_u128(value: u128) -> Self::Addr {
-        value
+    /// Iterates over formatted IPv4 addresses using one reused scratch string.
+    ///
+    /// The `&str` passed to the callback is valid only for the duration of that
+    /// callback invocation. Use this when you need textual addresses but want
+    /// to avoid allocating a new `String` for every address.
+    pub fn for_each_ip_str<F>(&self, mut f: F)
+    where
+        F: FnMut(&str),
+    {
+        let mut text = alloc::string::String::with_capacity(15);
+        self.for_each_addr(|addr| {
+            text.clear();
+            ipv4::push_long2ip(&mut text, addr);
+            f(text.as_str());
+        });
+    }
+}
+
+impl IpRange<IPv6> {
+    /// Fast-path strict containment for IPv6 string targets (single IP or CIDR).
+    ///
+    /// This avoids cross-family auto-detection and parses only IPv6 syntax.
+    /// Unlike [`IpRange::contains`], family-mismatched input returns an error.
+    #[inline]
+    pub fn contains_strict(&self, target: &str) -> Result<bool> {
+        let (start, end, is_range) = parse_v6_target(target)?;
+        if is_range {
+            Ok(self.contains_range(start, end))
+        } else {
+            Ok(self.contains_addr(start))
+        }
+    }
+
+    /// Iterates over formatted IPv6 addresses using one reused scratch string.
+    ///
+    /// The `&str` passed to the callback is valid only for the duration of that
+    /// callback invocation. Use this when you need textual addresses but want
+    /// to avoid allocating a new `String` for every address.
+    pub fn for_each_ip_str<F>(&self, mut f: F)
+    where
+        F: FnMut(&str),
+    {
+        let mut text = alloc::string::String::with_capacity(39);
+        self.for_each_addr(|addr| {
+            text.clear();
+            ipv6::push_long2ip(&mut text, addr);
+            f(text.as_str());
+        });
     }
 }
 
 #[cfg(feature = "std")]
 impl IpRange<IPv4> {
     /// Checks whether a [`std::net::Ipv4Addr`] lies inside this IPv4 range.
+    #[inline(always)]
     pub fn contains_ipv4(&self, addr: StdIpv4Addr) -> bool {
-        self.contains_addr(u32::from(addr))
+        let addr = u32::from(addr);
+        let start = self.ip_range.start_ip;
+        addr.wrapping_sub(start) < self.ip_range.len
     }
 
     /// Checks whether the inclusive [`std::net::Ipv4Addr`] bounds lie inside this range.
@@ -748,8 +1302,11 @@ impl IpRange<IPv4> {
 #[cfg(feature = "std")]
 impl IpRange<IPv6> {
     /// Checks whether a [`std::net::Ipv6Addr`] lies inside this IPv6 range.
+    #[inline(always)]
     pub fn contains_ipv6(&self, addr: StdIpv6Addr) -> bool {
-        self.contains_addr(u128::from(addr))
+        let addr = u128::from(addr);
+        let start = self.ip_range.start_ip;
+        addr.wrapping_sub(start) < self.ip_range.len
     }
 
     /// Checks whether the inclusive [`std::net::Ipv6Addr`] bounds lie inside this range.
